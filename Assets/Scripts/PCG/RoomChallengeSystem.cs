@@ -53,6 +53,7 @@ public class RoomChallengeSystem : MonoBehaviour
     private readonly List<List<GameObject>> roomObjects = new List<List<GameObject>>();
     private readonly List<SpikeTrap> spikes = new List<SpikeTrap>();
     private readonly HashSet<Vector2Int> solidTiles = new HashSet<Vector2Int>();
+    private readonly Dictionary<Vector2Int, GameObject> solidObjects = new Dictionary<Vector2Int, GameObject>();
     private readonly Dictionary<RoomRole, Material> floorMaterials = new Dictionary<RoomRole, Material>();
 
     private DungeonGenerator gen;
@@ -77,6 +78,21 @@ public class RoomChallengeSystem : MonoBehaviour
     public bool Active => challengesEnabled && roles.Count > 0;
     public Transform ChallengeRoot => root;
     public IReadOnlyCollection<Vector2Int> SolidTiles => solidTiles;
+    public Vector2Int? ChestTile { get; private set; }
+
+    /// <summary>Repair: hapus objek solid (turret) yang menghalangi jalur wajib.</summary>
+    public bool RemoveSolid(Vector2Int tile)
+    {
+        if (!solidTiles.Remove(tile)) return false;
+        if (solidObjects.TryGetValue(tile, out GameObject go) && go != null)
+        {
+            foreach (List<GameObject> list in roomObjects) list.Remove(go);
+            Destroy(go);
+        }
+        solidObjects.Remove(tile);
+        TurretCount = Mathf.Max(0, TurretCount - 1);
+        return true;
+    }
 
     // ------------------------------------------------------------------
     // Info tampilan
@@ -215,6 +231,8 @@ public class RoomChallengeSystem : MonoBehaviour
         gen = generator;
         spikes.Clear();
         solidTiles.Clear();
+        solidObjects.Clear();
+        ChestTile = null;
         roomObjects.Clear();
         ExtraEnemies = 0;
         TurretCount = 0;
@@ -568,6 +586,7 @@ public class RoomChallengeSystem : MonoBehaviour
         GameObject go = Instantiate(turretPrefab, gen.GridToWorld(tile.x, tile.y), Quaternion.identity, root);
         go.GetComponent<Turret>().Init(gen);
         solidTiles.Add(tile);
+        solidObjects[tile] = go;
         TurretCount++;
         roomObjects[index].Add(go);
     }
@@ -578,6 +597,7 @@ public class RoomChallengeSystem : MonoBehaviour
 
         Vector2Int tile = FreeTile(room, room.Center, occupied);
         GameObject go = Instantiate(chestPrefab, gen.GridToWorld(tile.x, tile.y) + Vector3.up * 0.3f, Quaternion.identity, root);
+        ChestTile = tile;
         roomObjects[index].Add(go);
     }
 

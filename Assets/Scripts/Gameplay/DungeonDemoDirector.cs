@@ -468,6 +468,41 @@ public class DungeonDemoDirector : MonoBehaviour
 
         foreach (DungeonRoom room in generator.Rooms)
             DrawRect(persistentRoot, room.x, room.y, room.width, room.height, new Color(RoomColor.r, RoomColor.g, RoomColor.b, 0.75f), 0.07f, 1.3f);
+
+        // jalur BFS Start → Goal (memperhitungkan objek solid)
+        HashSet<Vector2Int> solid = new HashSet<Vector2Int>();
+        if (generator.Challenges != null && generator.Challenges.Active) solid.UnionWith(generator.Challenges.SolidTiles);
+        Vector2Int goal = generator.GoalPosition;
+        List<Vector2Int> bfs = FindPathTo(generator.StartPosition, p => p == goal, solid);
+        if (bfs != null)
+        {
+            LineRenderer lr = CreateLine("BFSPath", new Color(0.3f, 1f, 0.45f, 0.9f), 0.14f, persistentRoot);
+            lr.positionCount = bfs.Count;
+            for (int i = 0; i < bfs.Count; i++) lr.SetPosition(i, ToWorld(bfs[i], 1.32f));
+        }
+
+        // lokasi spawn
+        DrawCircle(persistentRoot, generator.StartPosition, 0.6f, new Color(0.3f, 1f, 0.5f));
+        DrawCircle(persistentRoot, generator.GoalPosition, 0.6f, UIFactory.Gold);
+        foreach (Vector2Int e in generator.EnemyPositions) DrawCircle(persistentRoot, e, 0.45f, new Color(1f, 0.3f, 0.3f));
+        if (generator.ItemsParent != null)
+            foreach (Transform t in generator.ItemsParent) DrawCircle(persistentRoot, generator.WorldToGrid(t.position), 0.35f, UIFactory.Cyan);
+        if (generator.Challenges != null && generator.Challenges.ChestTile.HasValue)
+            DrawCircle(persistentRoot, generator.Challenges.ChestTile.Value, 0.45f, UIFactory.Gold);
+    }
+
+    private void DrawCircle(Transform parent, Vector2Int tile, float radius, Color color)
+    {
+        LineRenderer lr = CreateLine("Spawn", color, 0.06f, parent);
+        lr.loop = true;
+        const int segments = 20;
+        lr.positionCount = segments;
+        Vector3 c = ToWorld(tile, 1.3f);
+        for (int i = 0; i < segments; i++)
+        {
+            float a = i / (float)segments * Mathf.PI * 2f;
+            lr.SetPosition(i, c + new Vector3(Mathf.Cos(a) * radius, 0f, Mathf.Sin(a) * radius));
+        }
     }
 
     private void ClearPersistentOverlay()

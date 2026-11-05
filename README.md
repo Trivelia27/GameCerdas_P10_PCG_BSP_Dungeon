@@ -99,7 +99,10 @@ ClearDungeon → SetupSeed
 → BuildDungeon (Floor/Corridor, Wall visible saja, Start, Goal)
 → SpawnGameplayObjects (Player; Enemy & Item dengan constraint)
 → RoomChallengeSystem.Build (peran room, hazard, mode FSM Enemy, Boss, peti)
-→ Metrics → event Generated (HUD, animasi, game manager)
+→ Validasi area wajib (flood fill dari Start, memperhitungkan objek solid):
+     Goal + setiap room + setiap item + peti harus terjangkau
+     → gagal? REPAIR (hapus objek penghalang) → masih gagal? generate ulang (maks. 10×)
+→ Metrics + Layout Hash → event Generated (HUD, animasi, game manager)
 ```
 
 ## Checklist Wajib (§125, §128)
@@ -107,7 +110,9 @@ Grid ✔ · Seed ✔ · BSP ✔ · Room ✔ · Corridor ✔ · Start ✔ · Goal
 Enemy hanya di Floor & ≥ 8 tile dari Start ✔ · Item di Floor ✔ · Seed sama → dungeon identik ✔ · Tanpa error Console ✔ · Dapat dimainkan ✔
 
 ## Pengembangan yang Diimplementasikan
-- **BFS Validation** + **Generate-and-Test** (§93, §119)
+- **BFS Validation** + **Generate-and-Test** (§93, §119), ditambah **flood fill area wajib + repair** setelah objek di-spawn
+- **Layout Hash** di panel report: bukti di layar bahwa seed & parameter sama menghasilkan layout identik
+- **Overlay B**: Leaf, Room, jalur BFS Start→Goal, dan lingkaran lokasi spawn
 - **Improved Goal Placement**: strategi A (Last Room), B (Farthest Euclidean, default), C (Farthest BFS Path)
 - **Runtime Regeneration** + alur level berikutnya
 - **Dungeon Metrics** + **checklist constraint** live

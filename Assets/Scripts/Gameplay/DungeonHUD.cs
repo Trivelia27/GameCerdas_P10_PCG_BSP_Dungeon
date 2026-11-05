@@ -209,8 +209,8 @@ public class DungeonHUD : MonoBehaviour
         UIFactory.Place(label.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(492f, -26f), new Vector2(990f, 28f));
 
         TextMeshProUGUI legend = UIFactory.MakeText(chrome,
-            "Pipeline: Seed → Grid → BSP → Room → Corridor → Wall → Start/Goal → BFS → Spawn    ·    " +
-            "<color=#4DD9FF>cyan</color> = Leaf   <color=#FFD84D>kuning</color> = Room   <color=#4DFF73>hijau</color> = BFS",
+            "Seed → Grid → BSP → Room → Corridor → Wall → Goal/BFS → Spawn   ·   [B] " +
+            "<color=#4DD9FF>Leaf</color>  <color=#FFD84D>Room</color>  <color=#4DFF73>jalur BFS</color>  lingkaran = spawn",
             15f, UIFactory.Dim, TextAlignmentOptions.TopLeft);
         UIFactory.Place(legend.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(494f, -54f), new Vector2(990f, 24f));
 
@@ -742,7 +742,7 @@ public class DungeonHUD : MonoBehaviour
         Section(p, "MINIMAP · BSP LEAF & ROOM");
 
         RectTransform mapBox = UIFactory.Node(p, "MinimapBox");
-        UIFactory.Size(mapBox.gameObject, -1f, 196f);
+        UIFactory.Size(mapBox.gameObject, -1f, 186f);
 
         Image mapBg = UIFactory.MakeImage(mapBox, "Bg", new Color(0f, 0f, 0f, 0.35f), UIFactory.Rounded, true);
         UIFactory.Stretch(mapBg.rectTransform);
@@ -768,13 +768,14 @@ public class DungeonHUD : MonoBehaviour
         MetricRow(p, "wall", "Wall Objects");
         MetricRow(p, "dist", "Start → Goal");
         MetricRow(p, "spawn", "Enemy / Item / Hazard");
-        MetricRow(p, "time", "Generation Time");
+        MetricRow(p, "time", "Layout Hash / Time");
 
         Section(p, "CONSTRAINTS");
         string[] labels =
         {
             "Room ≥ 2, Start & Goal di Floor",
             "BFS: Goal dapat dicapai",
+            "Flood fill: semua room & item terjangkau",
             "Enemy modul ≥ 8 tile dari Start",
             "Safe room & corridor bebas Enemy",
             "Boss hanya di Goal room (§116)",
@@ -787,14 +788,14 @@ public class DungeonHUD : MonoBehaviour
         {
             RectTransform row = UIFactory.Node(p, "Constraint");
             UIFactory.Horizontal(row.gameObject, 10f).childAlignment = TextAnchor.MiddleLeft;
-            UIFactory.Size(row.gameObject, -1f, 20f);
+            UIFactory.Size(row.gameObject, -1f, 19f);
 
             Image pip = UIFactory.MakeImage(row, "Pip", UIFactory.Green, UIFactory.Circle);
             UIFactory.Size(pip.gameObject, 12f, 12f);
             row.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = false;
 
             TextMeshProUGUI text = UIFactory.MakeText(row, label, 15f, Color.white, TextAlignmentOptions.MidlineLeft);
-            UIFactory.Size(text.gameObject, -1f, 20f, 1f);
+            UIFactory.Size(text.gameObject, -1f, 19f, 1f);
 
             constraintRows.Add(new ConstraintRow { pip = pip, text = text });
         }
@@ -997,7 +998,7 @@ public class DungeonHUD : MonoBehaviour
         int hazardCount = rcs != null && rcs.Active ? rcs.SpikeCount + rcs.TurretCount : 0;
         SetMetric("spawn", EnemyController.All.Count + "  /  " + m.itemCount + (rcs != null && rcs.HasTreasure ? "+1" : "") + "  /  " + hazardCount);
         if (roleText != null) roleText.text = rcs != null ? rcs.RoleSummary() : "";
-        SetMetric("time", m.generationMs.ToString("0.0") + " ms");
+        SetMetric("time", "<color=#4DF2FF>" + m.layoutHash + "</color>  <color=#8899AA>" + m.generationMs.ToString("0") + " ms</color>");
 
         // constraint check dari data generator
         bool minEnemy = true, safe = true;
@@ -1028,12 +1029,16 @@ public class DungeonHUD : MonoBehaviour
 
         SetConstraint(0, m.roomCount >= 2 && startGoalOk, true);
         SetConstraint(1, m.valid && m.startGoalPath > 0, true);
-        SetConstraint(2, minEnemy, true);
-        SetConstraint(3, safe || !gen.KeepCorridorsClear, gen.KeepCorridorsClear);
-        SetConstraint(4, bossOk, true, !active);
-        SetConstraint(5, contained, true, !active);
-        SetConstraint(6, active && rcs.TreasureRoom >= 0 && !rcs.IsOnMainPath(rcs.TreasureRoom), false, !active);
-        SetConstraint(7, m.startGoalPath >= 40, false);
+        SetConstraint(2, m.mandatoryReachable, true);
+        if (constraintRows.Count > 2)
+            constraintRows[2].text.text = "Flood fill: " + m.mandatoryReached + "/" + m.mandatoryChecked + " area wajib terjangkau" +
+                                          (m.repairs > 0 ? " (repair " + m.repairs + ")" : "");
+        SetConstraint(3, minEnemy, true);
+        SetConstraint(4, safe || !gen.KeepCorridorsClear, gen.KeepCorridorsClear);
+        SetConstraint(5, bossOk, true, !active);
+        SetConstraint(6, contained, true, !active);
+        SetConstraint(7, active && rcs.TreasureRoom >= 0 && !rcs.IsOnMainPath(rcs.TreasureRoom), false, !active);
+        SetConstraint(8, m.startGoalPath >= 40, false);
     }
 
     private void SetConstraint(int index, bool ok, bool hard, bool notApplicable = false)

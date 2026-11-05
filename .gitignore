@@ -30,3 +30,6 @@ Thumbs.db
 *.unitypackage
 sysinfo.txt
 Exports/
+
+# Naskah demo (PDF lokal, tidak di-push)
+DemoVideo/

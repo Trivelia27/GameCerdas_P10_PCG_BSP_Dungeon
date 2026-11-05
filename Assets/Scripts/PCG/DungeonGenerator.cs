@@ -33,6 +33,11 @@ public class DungeonMetrics
     public int itemCount;
     public float floorPercentage;
     public float generationMs;
+    public string layoutHash = "-";
+    public bool mandatoryReachable;
+    public int mandatoryChecked;
+    public int mandatoryReached;
+    public int repairs;
 }
 
 public class DungeonGenerator : MonoBehaviour
@@ -132,7 +137,8 @@ public class DungeonGenerator : MonoBehaviour
     private readonly List<Vector2Int> itemPositions = new List<Vector2Int>();
     private readonly HashSet<Vector2Int> occupied = new HashSet<Vector2Int>();
 
-    private bool dataOnly;      // true saat dipanggil Experiment Runner (tanpa Instantiate)
+    private bool dataOnly;
+    private int mandatoryRetries;      // true saat dipanggil Experiment Runner (tanpa Instantiate)
     private DungeonMetrics metrics = new DungeonMetrics();
 
     public DungeonMetrics Metrics => metrics;
@@ -257,8 +263,32 @@ public class DungeonGenerator : MonoBehaviour
             roomChallenges.Build(this);
         }
 
+        // Validasi area wajib (flood fill) setelah semua objek di-spawn; repair bila terhalang
+        bool reachable = ValidateMandatoryAreas(true, out int checkedCount, out int reachedCount, out int repairCount);
+
         stopwatch.Stop();
         ComputeMetrics((float)stopwatch.Elapsed.TotalMilliseconds);
+        metrics.mandatoryReachable = reachable;
+        metrics.mandatoryChecked = checkedCount;
+        metrics.mandatoryReached = reachedCount;
+        metrics.repairs = repairCount;
+
+        Debug.Log("Flood fill area wajib: " + reachedCount + "/" + checkedCount + " terjangkau" +
+                  (repairCount > 0 ? " (repair: " + repairCount + " objek penghalang dihapus)" : "") +
+                  (reachable ? " → VALID" : " → GAGAL"));
+
+        if (!reachable)
+        {
+            mandatoryRetries++;
+            if (mandatoryRetries <= maxGenerationAttempts)
+            {
+                Debug.LogWarning("Area wajib tidak terjangkau meski sudah di-repair → generate ulang (seed + 1).");
+                seed++;
+                GenerateDungeon();
+                return;
+            }
+        }
+        mandatoryRetries = 0;
 
         if (autoFrameCamera)
         {
@@ -324,6 +354,8 @@ public class DungeonGenerator : MonoBehaviour
 
         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         bool ok = GenerateValidLayout();
+        bool reach = false;
+        int checkedCount = 0, reachedCount = 0;
         if (ok)
         {
             SpawnGameplayObjects();
@@ -332,10 +364,15 @@ public class DungeonGenerator : MonoBehaviour
             {
                 roomChallenges.Assign(this);
             }
+
+            reach = ValidateMandatoryAreas(false, out checkedCount, out reachedCount, out _);
         }
         stopwatch.Stop();
 
         ComputeMetrics((float)stopwatch.Elapsed.TotalMilliseconds);
+        metrics.mandatoryReachable = reach;
+        metrics.mandatoryChecked = checkedCount;
+        metrics.mandatoryReached = reachedCount;
         metrics.valid = ok;
         ascii = ok ? ToAscii(true) : "(invalid)";
 
@@ -1366,6 +1403,108 @@ public class DungeonGenerator : MonoBehaviour
         {
             metrics.startGoalPath = ComputeDistances(startPosition)[goalPosition.x, goalPosition.y];
         }
+
+        metrics.layoutHash = LayoutHash();
+    }
+
+    /// <summary>Hash FNV-1a dari peta ASCII (layout + posisi Enemy/Item). Seed & parameter sama → hash sama.</summary>
+    public string LayoutHash()
+    {
+        string ascii = ToAscii(true);
+        unchecked
+        {
+            uint h = 2166136261;
+            foreach (char ch in ascii) { h ^= ch; h *= 16777619; }
+            return h.ToString("X8");
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Validasi area wajib (flood fill) + repair
+    // ------------------------------------------------------------------
+    /// <summary>
+    /// Flood fill dari Start dengan memperhitungkan objek solid (turret). Area wajib:
+    /// Goal, setiap room, setiap Item, dan peti harta. Bila ada yang tidak terjangkau dan
+    /// <paramref name="repair"/> aktif, objek solid terdekat dihapus lalu diperiksa ulang.
+    /// </summary>
+    public bool ValidateMandatoryAreas(bool repair, out int checkedCount, out int reachedCount, out int repairCount)
+    {
+        repairCount = 0;
+        while (true)
+        {
+            HashSet<Vector2Int> blocked = new HashSet<Vector2Int>();
+            if (roomChallenges != null && roomChallenges.Active) blocked.UnionWith(roomChallenges.SolidTiles);
+
+            bool[,] reached = FloodFill(startPosition, blocked);
+
+            List<Vector2Int> unreachable = new List<Vector2Int>();
+            int total = 0, okCount = 0;
+
+            void Require(Vector2Int p, bool ok)
+            {
+                total++;
+                if (ok) okCount++; else unreachable.Add(p);
+            }
+
+            Require(goalPosition, reached[goalPosition.x, goalPosition.y]);
+
+            foreach (DungeonRoom room in rooms)
+            {
+                bool any = false;
+                for (int x = room.x; x < room.x + room.width && !any; x++)
+                    for (int y = room.y; y < room.y + room.height && !any; y++)
+                        if (reached[x, y]) any = true;
+                Require(room.Center, any);
+            }
+
+            foreach (Vector2Int item in itemPositions) Require(item, reached[item.x, item.y]);
+
+            if (roomChallenges != null && roomChallenges.Active && roomChallenges.ChestTile.HasValue)
+            {
+                Vector2Int c = roomChallenges.ChestTile.Value;
+                Require(c, reached[c.x, c.y]);
+            }
+
+            checkedCount = total;
+            reachedCount = okCount;
+
+            if (unreachable.Count == 0) return true;
+            if (!repair || roomChallenges == null || roomChallenges.SolidTiles.Count == 0) return false;
+
+            // repair: hapus objek solid yang paling dekat dengan target pertama yang tidak terjangkau
+            Vector2Int target = unreachable[0];
+            Vector2Int best = default;
+            float bestD = float.MaxValue;
+            foreach (Vector2Int s in roomChallenges.SolidTiles)
+            {
+                float d = Vector2Int.Distance(s, target);
+                if (d < bestD) { bestD = d; best = s; }
+            }
+            roomChallenges.RemoveSolid(best);
+            repairCount++;
+        }
+    }
+
+    private bool[,] FloodFill(Vector2Int from, HashSet<Vector2Int> blocked)
+    {
+        bool[,] visited = new bool[mapWidth, mapHeight];
+        Queue<Vector2Int> queue = new Queue<Vector2Int>();
+        queue.Enqueue(from);
+        visited[from.x, from.y] = true;
+
+        while (queue.Count > 0)
+        {
+            Vector2Int c = queue.Dequeue();
+            foreach (Vector2Int d in Directions)
+            {
+                Vector2Int n = c + d;
+                if (!IsInsideGrid(n.x, n.y) || visited[n.x, n.y] || grid[n.x, n.y] == TileType.Wall || blocked.Contains(n))
+                    continue;
+                visited[n.x, n.y] = true;
+                queue.Enqueue(n);
+            }
+        }
+        return visited;
     }
 
     public string MetricsToString()
@@ -1382,7 +1521,9 @@ public class DungeonGenerator : MonoBehaviour
             "StartGoalDist  : " + metrics.startGoalPath + " langkah (euclid " + metrics.startGoalEuclidean.ToString("0.0") + ")\n" +
             "Enemies        : " + metrics.enemyCount + "\n" +
             "Items          : " + metrics.itemCount + "\n" +
-            "Gen Time       : " + metrics.generationMs.ToString("0.0") + " ms";
+            "Gen Time       : " + metrics.generationMs.ToString("0.0") + " ms\n" +
+            "Layout Hash    : " + metrics.layoutHash + "\n" +
+            "Area wajib     : " + metrics.mandatoryReached + "/" + metrics.mandatoryChecked + " terjangkau (flood fill)";
     }
 
     /// <summary>

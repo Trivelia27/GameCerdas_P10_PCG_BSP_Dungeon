@@ -1,6 +1,6 @@
 # Hasil Eksperimen — Praktikum 10: Procedural Dungeon Generation dengan BSP
 
-Dihasilkan otomatis oleh `Tools > GameCerdas P10 > Run Experiments` (2026-11-05 18:03).
+Dihasilkan otomatis oleh `Tools > GameCerdas P10 > Run Experiments` (2026-11-05 18:27).
 Parameter default: Map 60×40, Min Leaf 12, Max Leaf 20, Min Room 5, Room Margin 2, Enemy 8, Item 5, Goal = Farthest Room (Euclidean), corridor width 1.
 
 *StartGoal (path)* = jarak BFS dalam langkah grid; *Euclid* = jarak garis lurus antar center room.
@@ -56,9 +56,9 @@ Jumlah GameObject = Floor + Wall (visible) + Goal + Player + Enemy + Item (tanpa
 
 | Ukuran | Total Tile | Rooms | Floor Tiles | Wall Objects | Wall tanpa optimasi | Total GameObject | Waktu gen (ms) |
 |---|---|---|---|---|---|---|---|
-| 40×30 | 1200 | 4.8 | 409 | 214 | 791 | 638 | 0.14 |
-| 60×40 | 2400 | 8.6 | 702 | 404 | 1698 | 1121 | 0.26 |
-| 80×60 | 4800 | 17.0 | 1460 | 837 | 3340 | 2312 | 0.44 |
+| 40×30 | 1200 | 4.8 | 409 | 214 | 791 | 638 | 0.15 |
+| 60×40 | 2400 | 8.6 | 702 | 404 | 1698 | 1121 | 0.28 |
+| 80×60 | 4800 | 17.0 | 1460 | 837 | 3340 | 2312 | 0.69 |
 
 ## Eksperimen 5 — Enemy Density (§106)
 
@@ -164,5 +164,7 @@ Wall Objects   : 352
 StartGoalDist  : 56 langkah (euclid 40.8)
 Enemies        : 8
 Items          : 5
-Gen Time       : 0.6 ms
+Gen Time       : 0.3 ms
+Layout Hash    : 260A4AB8
+Area wajib     : 12/12 terjangkau (flood fill)
 ```

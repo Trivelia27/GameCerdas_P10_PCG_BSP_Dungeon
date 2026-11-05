@@ -63,7 +63,7 @@ Agar player tidak langsung diserang atau kalah sebelum sempat bergerak (*spawn k
 **13. Mengapa level perlu divalidasi?**
 Karena dungeon yang "terlihat benar" belum tentu dapat dimainkan (lihat kasus Enemy menutup corridor pada jawaban no. 10 — validasi juga harus memperhitungkan object yang di-spawn, bukan hanya grid). Satu seed buruk bisa menghasilkan Goal yang tidak terjangkau atau room terlalu sedikit. Validasi sebelum build (Generate → Validate → Build) mencegah level rusak sampai ke player, dan pola generate-and-test (`maxGenerationAttempts = 10`) otomatis mencoba seed berikutnya.
 
-**14. Bagaimana BFS dapat memvalidasi dungeon?**
+**14. Bagaimana BFS dapat memvalidasi dungeon?** *(diterapkan dua kali: BFS Start→Goal pada grid sebelum build, lalu flood fill area wajib setelah objek di-spawn)*
 BFS dimulai dari Start dan menjelajahi semua tile non-Wall yang terhubung 4 arah. Jika Goal pernah dikunjungi, Start–Goal terhubung. Jika antrian habis sebelum Goal ditemukan, dungeon invalid. Variasi BFS (`ComputeDistances`) juga menghasilkan jarak langkah, yang dipakai untuk strategi Goal C dan metrics *Start–Goal Distance*. Pada Eksperimen 6 rata-rata jarak path: A (Last Room) 67.0, B (Farthest Euclidean) 73.2, C (Farthest Path) 84.0 langkah. Strategi C terbaik karena yang dirasakan player adalah jarak jalan, bukan garis lurus (seed 101: B = euclid 47.4 tetapi path 73, sedangkan C = euclid 39.1 tetapi path 86).
 
 **15. Apa keuntungan menggabungkan PCG dengan NavMesh dan AI?** *(lihat juga bagian C: Enemy FSM per peran room)*
@@ -95,3 +95,12 @@ Ini menghubungkan PCG dengan materi FSM sebelumnya. Semua gerakan dibatasi recta
 ## D. Kesimpulan Eksperimen Lain
 - **Ukuran dungeon (Eks. 4):** 40×30 → 80×60 menaikkan total GameObject ±638 → ±2312. Optimasi `IsWallVisible` memangkas Wall dari 3340 menjadi 837 cell pada 80×60 (−75%). Waktu algoritma data < 0.1 ms; biaya utama ada pada Instantiate/render, bukan algoritma.
 - **Enemy density (Eks. 5):** Enemy count absolut 20 pada 702 floor tile = 1 enemy per 35 tile (padat), 5 = 1 per 140 tile (sepi). Density berbasis luas floor (`useEnemyDensity`) lebih konsisten antar ukuran map.
+
+## E. Validasi Area Wajib (Flood Fill) dan Repair
+BFS Start→Goal (§93) hanya memastikan Goal terjangkau pada grid, sebelum objek di-spawn. Setelah Enemy, Item, peti, dan turret ditempatkan, generator menjalankan **flood fill dari Start** dengan memperlakukan objek solid (turret) sebagai penghalang. **Area wajib** yang harus terjangkau adalah Goal, setiap room, setiap Item, dan peti harta.
+- Bila ada yang tidak terjangkau, generator melakukan **repair**: objek solid yang paling dekat dengan area tersebut dihapus, lalu flood fill diulang.
+- Bila setelah repair tetap gagal, dungeon di-**generate ulang** dengan seed + 1, dibatasi `maxGenerationAttempts` = 10.
+
+Hasilnya tampil di HUD ("Flood fill: N/N area wajib terjangkau") dan Console. Contoh seed 12345: 13/13 area wajib (Goal + 6 room + 5 item + peti) terjangkau tanpa repair.
+
+**Layout Hash** (FNV-1a dari peta ASCII: layout + posisi Enemy/Item) ditampilkan di panel report. Seed dan parameter yang sama selalu menghasilkan hash yang sama (12345 → `260A4AB8`), sehingga konsistensi layout bisa dibuktikan langsung di layar, tidak hanya secara visual.
