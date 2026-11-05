@@ -51,14 +51,16 @@ public class DungeonGameManager : MonoBehaviour
     [SerializeField] private float autoNextDelay = 4f;
 
     [Header("Rules")]
-    [SerializeField] private int maxHealth = 3;
-    [SerializeField] private float hitCooldown = 1.2f;
+    [SerializeField] private int maxHealth = 5;
+    [SerializeField] private float hitCooldown = 1.1f;
     [SerializeField] private int itemScore = 100;
     [SerializeField] private int clearScore = 500;
 
     private readonly List<HistoryEntry> history = new List<HistoryEntry>();
     private DungeonState stateBeforePause;
     private float hitTimer;
+    private int failuresOnSeed;
+    private int lastFailedSeed = int.MinValue;
 
     public DungeonGenerator Generator => generator;
     public DungeonDemoDirector Director => director;
@@ -75,12 +77,28 @@ public class DungeonGameManager : MonoBehaviour
     public LevelResult LastResult { get; private set; }
     public IReadOnlyList<HistoryEntry> History => history;
     public SimplePlayerController Player { get; private set; }
+    public int TreasureScore { get; private set; }
+    public bool TreasureCollected { get; private set; }
+    public int CurrentRoom { get; private set; } = -1;
+    public int HitsTaken { get; private set; }
+
+    /// <summary>True saat gameplay berjalan (Playing dan tidak sedang animasi reveal). Dipakai Enemy & hazard.</summary>
+    public static bool IsLive
+    {
+        get
+        {
+            DungeonGameManager gm = Instance;
+            if (gm == null) return true;
+            return gm.State == DungeonState.Playing && (gm.director == null || !gm.director.IsRevealing);
+        }
+    }
 
     public event Action<string, Color> Toast;
     public event Action<Vector3, string, Color> Popup;
     public event Action Damaged;
     public event Action LevelReady;
     public event Action HistoryChanged;
+    public event Action<int> RoomEntered;
 
     // ------------------------------------------------------------------
     private void Awake()
@@ -143,7 +161,11 @@ public class DungeonGameManager : MonoBehaviour
                 break;
 
             case DungeonState.Playing:
-                if (!revealing) LevelTime += dt;
+                if (!revealing)
+                {
+                    LevelTime += dt;
+                    TrackRoom();
+                }
                 break;
 
             case DungeonState.LevelComplete:
@@ -154,6 +176,7 @@ public class DungeonGameManager : MonoBehaviour
                     if (AutoTimer <= 0f)
                     {
                         if (State == DungeonState.LevelComplete) NextLevel();
+                        else if (failuresOnSeed >= 2) SkipSeed();   // demo tidak terjebak di seed yang sama
                         else Retry();
                     }
                 }
@@ -233,6 +256,28 @@ public class DungeonGameManager : MonoBehaviour
         Toast?.Invoke("LEVEL " + Level, UIFactory.Cyan);
     }
 
+    private void TrackRoom()
+    {
+        RoomChallengeSystem rc = generator.Challenges;
+        if (Player == null || rc == null || !rc.Active) return;
+
+        int room = rc.RoomIndexAt(generator.WorldToGrid(Player.transform.position));
+        if (room >= 0 && room != CurrentRoom)
+        {
+            CurrentRoom = room;
+            RoomEntered?.Invoke(room);
+        }
+    }
+
+    private void SkipSeed()
+    {
+        Health = maxHealth;
+        State = DungeonState.Playing;
+        generator.SetSeed(generator.Seed + 1);
+        generator.GenerateDungeon();
+        Toast?.Invoke("SEED BARU · " + generator.Seed, UIFactory.Gold);
+    }
+
     public void Retry()
     {
         Health = maxHealth;
@@ -299,6 +344,10 @@ public class DungeonGameManager : MonoBehaviour
         Player = null;
         ItemsCollected = 0;
         ItemsTotal = generator.Metrics.itemCount;
+        TreasureCollected = false;
+        TreasureScore = 0;
+        CurrentRoom = -1;
+        HitsTaken = 0;
         LevelTime = 0f;
         hitTimer = 0f;
 
@@ -321,10 +370,24 @@ public class DungeonGameManager : MonoBehaviour
         if (State != DungeonState.Playing)
             return;
 
+        Vector3 p = item.transform.position;
+
+        if (item.IsTreasure)
+        {
+            TreasureCollected = true;
+            TreasureScore = item.Value;
+            Score += item.Value;
+            Fx.Burst(p, UIFactory.Gold, 50, 6f, 0.26f, 0.9f, 0.4f);
+            Fx.Ring(p - Vector3.up * 0.25f, UIFactory.Gold, 2.6f, 0.7f);
+            AudioManager.Play(Sfx.Rare, 1f);
+            Popup?.Invoke(p, "+" + item.Value, UIFactory.Gold);
+            Toast?.Invoke("TREASURE!", UIFactory.Gold);
+            return;
+        }
+
         ItemsCollected++;
         Score += itemScore;
 
-        Vector3 p = item.transform.position;
         Fx.Burst(p, UIFactory.Cyan, 26, 4.5f, 0.2f, 0.6f, 0.4f);
         Fx.Ring(p - Vector3.up * 0.4f, UIFactory.Cyan, 1.4f, 0.5f);
         AudioManager.Play(Sfx.Pickup, 0.8f, 0.9f + ItemsCollected * 0.07f);
@@ -358,6 +421,7 @@ public class DungeonGameManager : MonoBehaviour
         };
 
         Score += clearScore + timeBonus;
+        Health = Mathf.Min(maxHealth, Health + 2);   // hadiah: pulih 2 HP setiap level selesai
         State = DungeonState.LevelComplete;
         AutoTimer = autoNextDelay;
 
@@ -368,13 +432,14 @@ public class DungeonGameManager : MonoBehaviour
         PostFxController.Pulse(0.5f, 0.1f);
     }
 
-    public void PlayerHit(Vector3 enemyPosition)
+    public bool PlayerHit(Vector3 enemyPosition)
     {
         if (State != DungeonState.Playing || hitTimer > 0f || (director != null && director.IsRevealing))
-            return;
+            return false;
 
         hitTimer = hitCooldown;
         Health--;
+        HitsTaken++;
 
         if (Player != null)
         {
@@ -391,9 +456,14 @@ public class DungeonGameManager : MonoBehaviour
 
         if (Health <= 0)
         {
+            if (lastFailedSeed == generator.Seed) failuresOnSeed++;
+            else { lastFailedSeed = generator.Seed; failuresOnSeed = 1; }
+
             State = DungeonState.GameOver;
             AutoTimer = autoNextDelay;
             AudioManager.Play(Sfx.Lose, 0.9f);
         }
+
+        return true;
     }
 }

@@ -1,6 +1,6 @@
 # Hasil Eksperimen — Praktikum 10: Procedural Dungeon Generation dengan BSP
 
-Dihasilkan otomatis oleh `Tools > GameCerdas P10 > Run Experiments` (2026-11-04 10:14).
+Dihasilkan otomatis oleh `Tools > GameCerdas P10 > Run Experiments` (2026-11-05 18:03).
 Parameter default: Map 60×40, Min Leaf 12, Max Leaf 20, Min Room 5, Room Margin 2, Enemy 8, Item 5, Goal = Farthest Room (Euclidean), corridor width 1.
 
 *StartGoal (path)* = jarak BFS dalam langkah grid; *Euclid* = jarak garis lurus antar center room.
@@ -56,9 +56,9 @@ Jumlah GameObject = Floor + Wall (visible) + Goal + Player + Enemy + Item (tanpa
 
 | Ukuran | Total Tile | Rooms | Floor Tiles | Wall Objects | Wall tanpa optimasi | Total GameObject | Waktu gen (ms) |
 |---|---|---|---|---|---|---|---|
-| 40×30 | 1200 | 4.8 | 409 | 214 | 791 | 638 | 0.03 |
-| 60×40 | 2400 | 8.6 | 702 | 404 | 1698 | 1121 | 0.05 |
-| 80×60 | 4800 | 17.0 | 1460 | 837 | 3340 | 2312 | 0.09 |
+| 40×30 | 1200 | 4.8 | 409 | 214 | 791 | 638 | 0.14 |
+| 60×40 | 2400 | 8.6 | 702 | 404 | 1698 | 1121 | 0.26 |
+| 80×60 | 4800 | 17.0 | 1460 | 837 | 3340 | 2312 | 0.44 |
 
 ## Eksperimen 5 — Enemy Density (§106)
 
@@ -80,6 +80,30 @@ Nilai = jarak Start→Goal dalam langkah BFS (euclid dalam kurung).
 | 404 | 62 (47.5) | 62 (47.5) | 87 (43.7) |
 | 505 | 62 (44.9) | 62 (44.9) | 62 (44.9) |
 | **Rata-rata** | **67.0** | **73.2** | **84.0** |
+
+## Eksperimen 7 — Room Role Assignment (tantangan per room)
+
+Lapisan PCG kedua: Start & Boss = hard rule (Boss = room Goal, §116), Treasure = room samping terjauh di luar jalur utama Start→Goal (§117), sisanya Patrol/Guard/Trap/Sentry berurutan menurut difficulty (jarak BFS dari Start). RNG terpisah (System.Random(seed)) sehingga tabel 1–6 tidak berubah.
+
+Kode: S = Start, P = Patrol, G = Guard, T = Trap, Sn = Sentry, $ = Treasure, B = Boss (urutan list room BSP).
+
+| Seed | Rooms | Room di jalur utama | Urutan peran | Treasure di room samping | Boss = room Goal |
+|---|---|---|---|---|---|
+| 101 | 10 | 6 | `S·P·T·P·Sn·G·T·G·$·B` | Ya | Ya |
+| 202 | 8 | 5 | `S·P·T·G·P·Sn·$·B` | Ya | Ya |
+| 303 | 7 | 6 | `S·P·G·Sn·B·T·$` | Ya | Ya |
+| 404 | 11 | 5 | `S·P·P·Sn·G·T·$·G·T·G·B` | Ya | Ya |
+| 505 | 7 | 4 | `S·P·$·Sn·G·T·B` | Ya | Ya |
+| 12345 | 6 | 4 | `S·P·$·T·Sn·B` | Ya | Ya |
+
+Distribusi peran pada 50 dungeon valid (seed 1–50):
+
+| Start | Patrol | Guard | Trap | Sentry | Treasure | Boss |
+|---|---|---|---|---|---|---|
+| 50 | 79 | 73 | 62 | 45 | 50 | 50 |
+
+- Dungeon dengan keempat tantangan (Patrol, Guard, Trap, Sentry) sekaligus: **30/50**
+- Dungeon yang memiliki Treasure Room: **50/50**, di antaranya di room samping: **48**
 
 ## Contoh Peta ASCII — Seed 12345 (default)
 
@@ -140,5 +164,5 @@ Wall Objects   : 352
 StartGoalDist  : 56 langkah (euclid 40.8)
 Enemies        : 8
 Items          : 5
-Gen Time       : 0.0 ms
+Gen Time       : 0.6 ms
 ```

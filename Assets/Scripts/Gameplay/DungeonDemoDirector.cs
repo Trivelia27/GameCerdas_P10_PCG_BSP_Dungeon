@@ -34,6 +34,7 @@ public class DungeonDemoDirector : MonoBehaviour
         "CORRIDORS",
         "WALLS",
         "GOAL + BFS",
+        "ROOM ROLES",
         "SPAWN",
         "PLAY"
     };
@@ -61,6 +62,8 @@ public class DungeonDemoDirector : MonoBehaviour
     private bool targetIsGoal;
     private LineRenderer pathLine;
     private float stuckTimer;
+    private float replanTimer;
+    private float noPathTimer;
     private Vector3 lastPlayerPosition;
     private int stuckCount;
     private readonly HashSet<Vector2Int> extraBlocked = new HashSet<Vector2Int>();
@@ -71,6 +74,9 @@ public class DungeonDemoDirector : MonoBehaviour
     public string AutopilotStatus { get; private set; } = "";
     public bool IsRevealing { get; private set; }
     public bool AutopilotRunning => autopilotRunning;
+
+    /// <summary>False bila autopilot sedang mengincar Item (Goal tidak dihitung agar demo mengumpulkan semua Item).</summary>
+    public bool WantsGoal => !autopilotRunning || targetIsGoal;
 
     public bool RevealEnabled
     {
@@ -207,7 +213,7 @@ public class DungeonDemoDirector : MonoBehaviour
     {
         IsRevealing = false;
         DungeonMetrics m = generator.Metrics;
-        SetPhase(7, "Dungeon siap · " + m.roomCount + " room · Start→Goal " + m.startGoalPath +
+        SetPhase(8, "Dungeon siap · " + m.roomCount + " room · Start→Goal " + m.startGoalPath +
                     " langkah. (Animasi pipeline OFF — tekan V)");
         RefreshPersistentOverlay();
     }
@@ -226,6 +232,10 @@ public class DungeonDemoDirector : MonoBehaviour
         GameObject goal = FindChildWith<GoalTrigger>();
         GameObject startMarker = FindChildNamed("StartPrefab");
         GameObject playerGo = GameObject.FindWithTag("Player");
+        RoomChallengeSystem rc = generator.Challenges;
+        List<GameObject> challengeObjects = rc != null && rc.Active && rc.ChallengeRoot != null
+            ? Children(rc.ChallengeRoot) : new List<GameObject>();
+        foreach (GameObject go in challengeObjects) SetVisible(go, false);
 
         foreach (var list in floorTiles.Values) SetVisible(list, false);
         foreach (var list in wallTiles.Values) SetVisible(list, false);
@@ -335,9 +345,37 @@ public class DungeonDemoDirector : MonoBehaviour
         yield return Wait(1.8f);
         ClearOverlay();
 
-        // 7. Spawn
+        // 7. Room Roles — lapisan PCG ke-2 (constraint-based)
+        if (rc != null && rc.Active)
+        {
+            SetPhase(6, "Room Role Assignment: Start & Boss (hard rule), Treasure di room samping, " +
+                        "sisanya Patrol/Guard/Trap/Sentry sesuai difficulty (jarak BFS).");
+            yield return Wait(1.4f);
+
+            for (int i = 0; i < rooms.Count; i++)
+            {
+                RoomRole role = rc.RoleOf(i);
+                Color color = RoomChallengeSystem.RoleColor(role);
+                DrawRect(null, rooms[i].x, rooms[i].y, rooms[i].width, rooms[i].height, color, 0.16f, 1.35f);
+
+                foreach (GameObject go in rc.RoomObjects(i)) SetVisible(go, true);
+                if (!skipRequested)
+                {
+                    Fx.Ring(ToWorld(rooms[i].Center, 0.1f), color, Mathf.Max(rooms[i].width, rooms[i].height) * 0.55f, 0.6f);
+                    AudioManager.Play(Sfx.Unlock, 0.3f, 0.8f + i * 0.07f);
+                }
+
+                SetPhase(6, "Room " + (i + 1) + " → <color=#" + ColorUtility.ToHtmlStringRGB(color) + "><b>" +
+                            RoomChallengeSystem.RoleName(role) + "</b></color>  (difficulty " + rc.Difficulty[i].ToString("0.00") +
+                            (rc.IsOnMainPath(i) ? ", jalur utama" : ", room samping") + ") — " + RoomChallengeSystem.RoleHint(role));
+                yield return Wait(0.85f);
+            }
+            ClearOverlay();
+        }
+
+        // 8. Spawn
         Pop(playerGo, UIFactory.Cyan);
-        SetPhase(6, "Player di Start. Enemy: hanya di Floor, ≥ " + generator.MinEnemyDistanceFromStart.ToString("0") +
+        SetPhase(7, "Player di Start. Enemy: hanya di Floor, ≥ " + generator.MinEnemyDistanceFromStart.ToString("0") +
                     " tile dari Start, bukan safe room, tidak menutup corridor.");
         yield return Wait(0.5f);
         for (int i = 0; i < enemies.Count; i++)
@@ -345,7 +383,9 @@ public class DungeonDemoDirector : MonoBehaviour
             Pop(enemies[i], UIFactory.Red);
             yield return Wait(0.16f);
         }
-        SetPhase(6, "<b>" + m.enemyCount + " Enemy</b> & <b>" + m.itemCount + " Item</b> ditempatkan secara procedural (constraint-based).");
+        SetPhase(7, "<b>" + enemies.Count + " Enemy</b> (" + m.enemyCount + " dari modul" +
+                    (rc != null && rc.Active ? " + " + rc.ExtraEnemies + " penjaga room + Boss" : "") + ") & <b>" + m.itemCount +
+                    " Item</b> — perilaku Enemy mengikuti peran room (FSM).");
         for (int i = 0; i < items.Count; i++)
         {
             Pop(items[i], UIFactory.Cyan);
@@ -361,9 +401,10 @@ public class DungeonDemoDirector : MonoBehaviour
         SetVisible(goal, true);
         SetVisible(startMarker, true);
         SetVisible(playerGo, true);
+        foreach (GameObject go in challengeObjects) SetVisible(go, true);
         ClearOverlay();
 
-        SetPhase(7, "Dungeon siap · " + m.roomCount + " room · Start→Goal " + m.startGoalPath +
+        SetPhase(8, "Dungeon siap · " + m.roomCount + " room · Start→Goal " + m.startGoalPath +
                     " langkah. Ambil Item, hindari Enemy, capai Goal!");
         IsRevealing = false;
         skipRequested = false;
@@ -478,13 +519,28 @@ public class DungeonDemoDirector : MonoBehaviour
         }
 
         bool targetLost = !targetIsGoal && targetItem == null;
-        if (path == null || pathIndex >= path.Count || targetLost)
+        replanTimer -= Time.deltaTime;
+        if (path == null || pathIndex >= path.Count || targetLost || replanTimer <= 0f)
         {
+            replanTimer = 0.3f;
             Plan();
-            if (path == null) return;
+            if (path == null)
+            {
+                player.ExternalInput = Vector2.zero;   // semua jalan sedang berbahaya → tunggu
+                noPathTimer += Time.deltaTime;
+                StepOffDanger();
+                return;
+            }
         }
 
         Vector3 position = player.transform.position;
+
+        // menghindar bila tile saat ini berada di garis tembak proyektil
+        if (InProjectileLine(generator.WorldToGrid(position)))
+        {
+            StepOffDanger();
+            return;
+        }
         Vector3 waypoint = generator.GridToWorld(path[pathIndex].x, path[pathIndex].y);
         Vector3 delta = waypoint - position;
         delta.y = 0f;
@@ -529,25 +585,81 @@ public class DungeonDemoDirector : MonoBehaviour
     {
         Vector2Int from = generator.WorldToGrid(player.transform.position);
 
-        HashSet<Vector2Int> enemyTiles = new HashSet<Vector2Int>();
-        foreach (Vector2Int e in generator.EnemyPositions) enemyTiles.Add(e);
+        // Bahaya dinamis: Enemy bergerak (posisi saat ini), spike aktif/akan aktif, turret (solid)
+        HashSet<Vector2Int> hazards = new HashSet<Vector2Int>(extraBlocked);
+        RoomChallengeSystem rc = generator.Challenges;
+        if (rc != null && rc.Active)
+        {
+            rc.CollectDangerTiles(hazards, 0.55f);
+            hazards.UnionWith(rc.SolidTiles);
+        }
 
-        // Constraint kuat: hindari tile Enemy + 8 tetangganya. Fallback: hanya tile Enemy.
-        HashSet<Vector2Int> strong = new HashSet<Vector2Int>(extraBlocked);
-        foreach (Vector2Int e in enemyTiles)
-            for (int dx = -1; dx <= 1; dx++)
-                for (int dy = -1; dy <= 1; dy++)
-                    strong.Add(e + new Vector2Int(dx, dy));
+        // Constraint kuat: jauhi Enemy (radius 1, pengejar/boss radius 2). Lemah: hanya tile Enemy.
+        HashSet<Vector2Int> strong = new HashSet<Vector2Int>(hazards);
+        HashSet<Vector2Int> weak = new HashSet<Vector2Int>(hazards);
+        foreach (EnemyController e in EnemyController.All)
+        {
+            Vector2Int g = generator.WorldToGrid(e.transform.position);
+
+            // jangan memicu Guard: hindari radius deteksinya selama ia berjaga
+            if (e.Mode == EnemyMode.Guard && e.State != EnemyState.Chase)
+                for (int dx = -3; dx <= 3; dx++)
+                    for (int dy = -3; dy <= 3; dy++)
+                        if (dx * dx + dy * dy <= 10) strong.Add(g + new Vector2Int(dx, dy));
+
+            int r = e.IsBoss || e.IsThreatening ? 2 : 1;
+            for (int dx = -r; dx <= r; dx++)
+                for (int dy = -r; dy <= r; dy++)
+                    strong.Add(g + new Vector2Int(dx, dy));
+            weak.Add(g);
+            if (e.IsBoss) foreach (Vector2Int d in Directions) weak.Add(g + d);
+        }
         strong.Remove(from);
-
-        HashSet<Vector2Int> weak = new HashSet<Vector2Int>(enemyTiles);
-        weak.UnionWith(extraBlocked);
         weak.Remove(from);
+
+        // dikejar dari dekat → jangan menunggu, langsung lari ke target
+        bool threatNear = false;
+        foreach (EnemyController e in EnemyController.All)
+        {
+            Vector3 d = e.transform.position - player.transform.position;
+            d.y = 0f;
+            if ((e.IsThreatening || e.IsBoss) && d.magnitude < 3.2f) threatNear = true;
+        }
+        if (threatNear) noPathTimer = Mathf.Max(noPathTimer, 1.3f);
+
+        // Tier "nekat": abaikan Enemy, tetapi tetap hindari spike yang aktif SEKARANG dan turret
+        HashSet<Vector2Int> mustAvoid = new HashSet<Vector2Int>(extraBlocked);
+        if (rc != null && rc.Active)
+        {
+            rc.CollectDangerTiles(mustAvoid, 0.15f);
+            mustAvoid.UnionWith(rc.SolidTiles);
+        }
+        mustAvoid.Remove(from);
+
+        // saat mengejar Item, tile Goal diblokir agar level tidak selesai tanpa sengaja
+        HashSet<Vector2Int> strongItem = new HashSet<Vector2Int>(strong) { generator.GoalPosition };
+        HashSet<Vector2Int> weakItem = new HashSet<Vector2Int>(weak) { generator.GoalPosition };
+        HashSet<Vector2Int> openItem = new HashSet<Vector2Int>(mustAvoid) { generator.GoalPosition };
+        HashSet<Vector2Int> reachItem = new HashSet<Vector2Int> { generator.GoalPosition };
 
         // Target: Item terdekat yang tersisa, lalu Goal
         Dictionary<Vector2Int, ItemPickup> items = new Dictionary<Vector2Int, ItemPickup>();
         foreach (ItemPickup item in FindObjectsByType<ItemPickup>(FindObjectsSortMode.None))
-            items[generator.WorldToGrid(item.transform.position)] = item;
+        {
+            // lewati Item yang sedang dijaga Boss dari dekat (risiko > hadiah)
+            bool guardedByBoss = false;
+            foreach (EnemyController e in EnemyController.All)
+            {
+                if (!e.IsBoss) continue;
+                Vector3 c = e.IsLeashed ? e.LeashCenter : e.transform.position;
+                Vector3 d = c - item.transform.position;
+                d.y = 0f;
+                if (d.magnitude < (e.IsLeashed ? e.LeashRadius + 0.5f : 4.5f)) guardedByBoss = true;
+            }
+
+            if (!guardedByBoss)
+                items[generator.WorldToGrid(item.transform.position)] = item;
+        }
 
         targetIsGoal = false;
         targetItem = null;
@@ -555,13 +667,26 @@ public class DungeonDemoDirector : MonoBehaviour
 
         if (items.Count > 0)
         {
-            path = FindPathTo(from, p => items.ContainsKey(p), strong)
-                ?? FindPathTo(from, p => items.ContainsKey(p), weak);
+            path = FindPathTo(from, p => items.ContainsKey(p), strongItem)
+                ?? FindPathTo(from, p => items.ContainsKey(p), weakItem);
+
+            if (path == null && noPathTimer > 1.2f)
+                path = FindPathTo(from, p => items.ContainsKey(p), openItem);
 
             if (path != null)
             {
                 targetItem = items[path[path.Count - 1]];
-                AutopilotStatus = "BFS → Item terdekat (" + items.Count + " tersisa) · " + (path.Count - 1) + " langkah";
+                AutopilotStatus = (targetItem.IsTreasure ? "BFS → TREASURE" : "BFS → Item terdekat (" + items.Count + " tersisa)") +
+                                  " · " + (path.Count - 1) + " langkah";
+                noPathTimer = 0f;
+            }
+            else if (FindPathTo(from, p => items.ContainsKey(p), reachItem) != null)
+            {
+                // Item dapat dicapai, tetapi jalurnya sedang berbahaya (spike/enemy) → tunggu celah
+                AutopilotStatus = "Menunggu celah aman…";
+                stuckTimer = 0f;
+                lastPlayerPosition = player.transform.position;
+                return;
             }
         }
 
@@ -569,19 +694,56 @@ public class DungeonDemoDirector : MonoBehaviour
         {
             Vector2Int goal = generator.GoalPosition;
             path = FindPathTo(from, p => p == goal, strong)
-                ?? FindPathTo(from, p => p == goal, weak)
-                ?? FindPathTo(from, p => p == goal, new HashSet<Vector2Int>());
+                ?? FindPathTo(from, p => p == goal, weak);
+
+            // terlalu lama menunggu → nekat (abaikan bahaya)
+            if (path == null && noPathTimer > 1.2f)
+                path = FindPathTo(from, p => p == goal, mustAvoid);
 
             targetIsGoal = true;
             AutopilotStatus = path != null
                 ? (items.Count > 0 ? "Item tidak aman → " : "Semua Item diambil → ") + "BFS ke GOAL · " + (path.Count - 1) + " langkah"
-                : "Goal tidak terjangkau!";
+                : "Menunggu celah aman…";
         }
+
+        if (path != null) noPathTimer = 0f;
 
         pathIndex = path != null && path.Count > 1 ? 1 : 0;
         stuckTimer = 0f;
         lastPlayerPosition = player.transform.position;
         UpdatePathLine();
+    }
+
+    private static bool InProjectileLine(Vector2Int tile)
+    {
+        if (Projectile.All.Count == 0) return false;
+        HashSet<Vector2Int> line = new HashSet<Vector2Int>();
+        foreach (Projectile p in Projectile.All)
+            if (p != null) p.CollectPathTiles(line, 0.8f);
+        return line.Contains(tile);
+    }
+
+    /// <summary>Bila sedang berdiri di tile berbahaya saat menunggu, geser ke tile aman terdekat.</summary>
+    private void StepOffDanger()
+    {
+        RoomChallengeSystem rc = generator.Challenges;
+        if (rc == null || !rc.Active) return;
+
+        HashSet<Vector2Int> danger = new HashSet<Vector2Int>(rc.SolidTiles);
+        rc.CollectDangerTiles(danger, 0.6f);
+        foreach (EnemyController e in EnemyController.All)
+            danger.Add(generator.WorldToGrid(e.transform.position));
+
+        Vector2Int here = generator.WorldToGrid(player.transform.position);
+        if (!danger.Contains(here)) return;
+
+        List<Vector2Int> escape = FindPathTo(here, p => !danger.Contains(p), new HashSet<Vector2Int>(rc.SolidTiles));
+        if (escape == null || escape.Count < 2) return;
+
+        Vector3 target = generator.GridToWorld(escape[1].x, escape[1].y);
+        Vector3 delta = target - player.transform.position;
+        delta.y = 0f;
+        player.ExternalInput = Vector2.ClampMagnitude(new Vector2(delta.x, delta.z) / Mathf.Max(0.0001f, player.MoveSpeed * Time.deltaTime), 1f);
     }
 
     /// <summary>BFS 4 arah pada grid; berhenti pada tile pertama yang memenuhi isTarget.</summary>

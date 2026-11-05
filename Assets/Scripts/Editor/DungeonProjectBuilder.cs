@@ -27,6 +27,7 @@ public static class DungeonProjectBuilder
     private struct Mats
     {
         public Material floor, corridor, wall, goal, beam, start, enemy, enemyEye, enemyRing, item, player, visor, halo;
+        public Material boss, spikePlate, spikeMetal, turretBody, turretEye, projectile, chest, chestTrim;
     }
 
     [MenuItem("Tools/GameCerdas P10/1. Build Assets + Scene")]
@@ -48,6 +49,14 @@ public static class DungeonProjectBuilder
             enemyEye = CreateMaterial("EnemyEyeMaterial", new Color(1f, 0.4f, 0.3f), 0.8f, new Color(1f, 0.25f, 0.15f) * 5f),
             enemyRing = CreateMaterial("EnemyRingMaterial", new Color(0.6f, 0.05f, 0.08f), 0.3f, new Color(1f, 0.08f, 0.1f) * 0.9f),
             halo = CreateMaterial("PlayerHaloMaterial", new Color(0.1f, 0.5f, 0.7f), 0.3f, Cyan * 0.6f),
+            boss = CreateMaterial("BossMaterial", new Color(0.35f, 0.02f, 0.06f), 0.7f, new Color(0.9f, 0.05f, 0.12f) * 0.9f),
+            spikePlate = CreateMaterial("SpikePlateMaterial", new Color(0.12f, 0.05f, 0.07f), 0.4f, new Color(0.5f, 0.08f, 0.12f) * 0.5f, edge),
+            spikeMetal = CreateMaterial("SpikeMetalMaterial", new Color(0.75f, 0.75f, 0.8f), 0.85f, new Color(1f, 0.2f, 0.25f) * 0.35f),
+            turretBody = CreateMaterial("TurretBodyMaterial", new Color(0.22f, 0.16f, 0.34f), 0.6f, Violet * 1.1f, edge),
+            turretEye = CreateMaterial("TurretEyeMaterial", new Color(0.7f, 0.4f, 1f), 0.8f, new Color(0.7f, 0.35f, 1f) * 3f),
+            projectile = CreateMaterial("ProjectileMaterial", new Color(0.8f, 0.5f, 1f), 0.8f, new Color(0.75f, 0.4f, 1f) * 5f),
+            chest = CreateMaterial("ChestMaterial", new Color(0.45f, 0.27f, 0.1f), 0.5f, new Color(1f, 0.6f, 0.15f) * 0.35f, edge),
+            chestTrim = CreateMaterial("ChestTrimMaterial", Gold, 0.85f, Gold * 2.5f),
             item = CreateMaterial("ItemMaterial", Cyan, 0.85f, Cyan * 3.2f),
             player = CreateMaterial("PlayerMaterial", new Color(0.16f, 0.42f, 1f), 0.75f, new Color(0.1f, 0.3f, 1f) * 0.35f),
             visor = CreateMaterial("PlayerVisorMaterial", Cyan, 0.9f, Cyan * 3.5f)
@@ -60,12 +69,15 @@ public static class DungeonProjectBuilder
         GameObject player = CreatePlayerPrefab(m.player, m.visor, m.halo);
         GameObject enemy = CreateEnemyPrefab(m.enemy, m.enemyEye, m.enemyRing);
         GameObject item = CreateItemPrefab(m.item);
+        GameObject spike = CreateSpikePrefab(m.spikePlate, m.spikeMetal);
+        GameObject turret = CreateTurretPrefab(m.turretBody, m.turretEye, m.projectile);
+        GameObject chest = CreateChestPrefab(m.chest, m.chestTrim);
 
         VolumeProfile profile = CreatePostFxProfile();
         Material lineMat = Resources.Load<Material>("Fx/FxLine");
 
-        CreateScene(ScenePath, false, m, profile, lineMat, floor, wall, goal, start, player, enemy, item);
-        CreateScene(DemoScenePath, true, m, profile, lineMat, floor, wall, goal, start, player, enemy, item);
+        CreateScene(ScenePath, false, m, profile, lineMat, floor, wall, goal, start, player, enemy, item, spike, turret, chest);
+        CreateScene(DemoScenePath, true, m, profile, lineMat, floor, wall, goal, start, player, enemy, item, spike, turret, chest);
 
         EditorBuildSettings.scenes = new[]
         {
@@ -280,7 +292,7 @@ public static class DungeonProjectBuilder
     private static GameObject CreateEnemyPrefab(Material bodyMat, Material eyeMat, Material ringMat)
     {
         GameObject go = new GameObject("EnemyPrefab");
-        go.AddComponent<SimpleEnemy>();
+        go.AddComponent<EnemyController>();   // FSM (mode Idle = perilaku SimpleEnemy modul)
 
         GameObject body = Part(PrimitiveType.Capsule, "Body", go.transform, new Vector3(0f, -0.3f, 0f), new Vector3(0.7f, 0.7f, 0.7f), bodyMat, true);
 
@@ -291,6 +303,107 @@ public static class DungeonProjectBuilder
             .GetComponent<Renderer>().shadowCastingMode = ShadowCastingMode.Off;
 
         return SavePrefab(go, CharacterPrefabDir);
+    }
+
+    // Trap Room: plate + 4 spike yang naik-turun
+    private static GameObject CreateSpikePrefab(Material plateMat, Material metalMat)
+    {
+        GameObject go = new GameObject("SpikePrefab");
+        SpikeTrap trap = go.AddComponent<SpikeTrap>();
+
+        GameObject plate = Part(PrimitiveType.Cube, "Plate", go.transform, new Vector3(0f, 0.065f, 0f), new Vector3(0.9f, 0.03f, 0.9f), plateMat);
+        plate.GetComponent<Renderer>().shadowCastingMode = ShadowCastingMode.Off;
+
+        GameObject spikes = new GameObject("Spikes");
+        spikes.transform.SetParent(go.transform, false);
+        spikes.transform.localPosition = new Vector3(0f, 0.25f, 0f);
+
+        Vector3[] offsets = { new Vector3(-0.2f, 0f, -0.2f), new Vector3(0.2f, 0f, -0.2f), new Vector3(-0.2f, 0f, 0.2f), new Vector3(0.2f, 0f, 0.2f) };
+        foreach (Vector3 o in offsets)
+        {
+            GameObject spike = Part(PrimitiveType.Cube, "Spike", spikes.transform, o, new Vector3(0.17f, 0.17f, 0.17f), metalMat);
+            spike.transform.localRotation = Quaternion.Euler(45f, 0f, 45f);
+        }
+
+        SerializedObject so = new SerializedObject(trap);
+        so.FindProperty("spikes").objectReferenceValue = spikes.transform;
+        so.FindProperty("plate").objectReferenceValue = plate.GetComponent<Renderer>();
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        return SavePrefab(go, DungeonPrefabDir);
+    }
+
+    // Sentry Room: turret yang membidik & menembak
+    private static GameObject CreateTurretPrefab(Material bodyMat, Material eyeMat, Material projectileMat)
+    {
+        GameObject go = new GameObject("TurretPrefab");
+        Turret turret = go.AddComponent<Turret>();
+
+        Part(PrimitiveType.Cylinder, "Base", go.transform, new Vector3(0f, 0.3f, 0f), new Vector3(0.8f, 0.3f, 0.8f), bodyMat, true);
+
+        GameObject head = new GameObject("Head");
+        head.transform.SetParent(go.transform, false);
+        head.transform.localPosition = new Vector3(0f, 0.78f, 0f);
+
+        Part(PrimitiveType.Cube, "HeadBox", head.transform, Vector3.zero, new Vector3(0.52f, 0.3f, 0.52f), bodyMat);
+        Part(PrimitiveType.Cube, "Barrel", head.transform, new Vector3(0f, 0f, 0.38f), new Vector3(0.13f, 0.13f, 0.5f), bodyMat);
+        GameObject eye = Part(PrimitiveType.Cube, "Eye", head.transform, new Vector3(0f, 0.06f, 0.27f), new Vector3(0.36f, 0.08f, 0.04f), eyeMat);
+
+        GameObject tLight = new GameObject("TurretLight");
+        tLight.transform.SetParent(go.transform, false);
+        tLight.transform.localPosition = new Vector3(0f, 1.6f, 0f);
+        Light lt = tLight.AddComponent<Light>();
+        lt.type = LightType.Point;
+        lt.color = new Color(0.7f, 0.45f, 1f);
+        lt.range = 4f;
+        lt.intensity = 2.5f;
+
+        GameObject muzzle = new GameObject("Muzzle");
+        muzzle.transform.SetParent(head.transform, false);
+        muzzle.transform.localPosition = new Vector3(0f, 0f, 0.7f);
+
+        SerializedObject so = new SerializedObject(turret);
+        so.FindProperty("head").objectReferenceValue = head.transform;
+        so.FindProperty("muzzle").objectReferenceValue = muzzle.transform;
+        so.FindProperty("eye").objectReferenceValue = eye.GetComponent<Renderer>();
+        so.FindProperty("projectileMaterial").objectReferenceValue = projectileMat;
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        return SavePrefab(go, DungeonPrefabDir);
+    }
+
+    // Treasure Room: peti harta (+300)
+    private static GameObject CreateChestPrefab(Material bodyMat, Material trimMat)
+    {
+        GameObject go = new GameObject("ChestPrefab");
+
+        SphereCollider trigger = go.AddComponent<SphereCollider>();
+        trigger.isTrigger = true;
+        trigger.radius = 0.6f;
+
+        ItemPickup pickup = go.AddComponent<ItemPickup>();
+        SerializedObject so = new SerializedObject(pickup);
+        so.FindProperty("isTreasure").boolValue = true;
+        so.FindProperty("value").intValue = 300;
+        so.FindProperty("bobAmplitude").floatValue = 0.04f;
+        so.FindProperty("spinSpeed").floatValue = 25f;
+        so.FindProperty("sparkleColor").colorValue = new Color(1f, 0.85f, 0.3f, 0.95f);
+        so.ApplyModifiedPropertiesWithoutUndo();
+
+        Part(PrimitiveType.Cube, "Box", go.transform, Vector3.zero, new Vector3(0.7f, 0.4f, 0.5f), bodyMat);
+        Part(PrimitiveType.Cube, "Lid", go.transform, new Vector3(0f, 0.25f, 0f), new Vector3(0.74f, 0.12f, 0.54f), trimMat);
+        Part(PrimitiveType.Cube, "Lock", go.transform, new Vector3(0f, 0.08f, 0.26f), new Vector3(0.14f, 0.16f, 0.04f), trimMat);
+
+        GameObject lightGo = new GameObject("ChestLight");
+        lightGo.transform.SetParent(go.transform, false);
+        lightGo.transform.localPosition = new Vector3(0f, 1f, 0f);
+        Light light = lightGo.AddComponent<Light>();
+        light.type = LightType.Point;
+        light.color = new Color(1f, 0.8f, 0.35f);
+        light.range = 4f;
+        light.intensity = 2.5f;
+
+        return SavePrefab(go, ItemPrefabDir);
     }
 
     // §81 Item Prefab: kristal berputar + trigger
@@ -349,7 +462,8 @@ public static class DungeonProjectBuilder
     // §27 Scene
     private static void CreateScene(string scenePath, bool demo, Mats m, VolumeProfile profile, Material lineMat,
                                     GameObject floor, GameObject wall, GameObject goal, GameObject start,
-                                    GameObject player, GameObject enemy, GameObject item)
+                                    GameObject player, GameObject enemy, GameObject item,
+                                    GameObject spike, GameObject turret, GameObject chest)
     {
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -408,6 +522,16 @@ public static class DungeonProjectBuilder
         GameObject genGo = new GameObject("DungeonGenerator");
         DungeonGenerator gen = genGo.AddComponent<DungeonGenerator>();
         DungeonDemoDirector director = genGo.AddComponent<DungeonDemoDirector>();
+        RoomChallengeSystem challenges = genGo.AddComponent<RoomChallengeSystem>();
+
+        SerializedObject cso = new SerializedObject(challenges);
+        cso.FindProperty("enemyPrefab").objectReferenceValue = enemy;
+        cso.FindProperty("spikePrefab").objectReferenceValue = spike;
+        cso.FindProperty("turretPrefab").objectReferenceValue = turret;
+        cso.FindProperty("chestPrefab").objectReferenceValue = chest;
+        cso.FindProperty("floorMaterial").objectReferenceValue = m.floor;
+        cso.FindProperty("bossMaterial").objectReferenceValue = m.boss;
+        cso.ApplyModifiedPropertiesWithoutUndo();
         DungeonGameManager manager = genGo.AddComponent<DungeonGameManager>();
         genGo.AddComponent<DungeonHUD>();
 
@@ -431,6 +555,7 @@ public static class DungeonProjectBuilder
         so.FindProperty("enemyPrefab").objectReferenceValue = enemy;
         so.FindProperty("itemPrefab").objectReferenceValue = item;
         so.FindProperty("corridorMaterial").objectReferenceValue = m.corridor;
+        so.FindProperty("roomChallenges").objectReferenceValue = challenges;
         so.FindProperty("levelParent").objectReferenceValue = levelRoot.transform;
         so.FindProperty("logAsciiMap").boolValue = !demo;
         so.FindProperty("enableRegenerateKey").boolValue = false; // R ditangani DungeonGameManager

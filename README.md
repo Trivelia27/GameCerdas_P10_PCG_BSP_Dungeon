@@ -5,11 +5,33 @@ Unity 6 (6000.0.83f1) · URP + post-processing · uGUI/TextMeshPro · Input Mana
 ![Title & animasi BSP](Dokumentasi/01_Title_dan_Animasi_BSP.png)
 ![Gameplay autopilot](Dokumentasi/02_Gameplay_Autopilot.png)
 ![Level cleared](Dokumentasi/03_Level_Cleared.png)
+![Room challenges](Dokumentasi/04_Room_Challenges.png)
+![Overlay BSP (tombol B)](Dokumentasi/05_Overlay_BSP.png)
+![Kamera follow (tombol C)](Dokumentasi/06_Kamera_Follow.png)
+
+## Room Challenges — setiap room punya tantangan berbeda
+Setelah layout BSP selesai, lapisan PCG kedua (`RoomChallengeSystem`) memberi **peran** pada tiap room:
+
+| Peran | Aturan penempatan | Tantangan |
+|---|---|---|
+| **START** | room pertama (hard rule) | Safe room, tanpa Enemy |
+| **PATROL** | room termudah (difficulty terendah) | Enemy berpatroli mengelilingi sudut room — atur timing |
+| **GUARD** | bergilir sesuai difficulty | Penjaga diam dengan **radius deteksi** (lingkaran kuning); masuk radius → dikejar → kembali ke pos bila kehilangan player |
+| **TRAP** | bergilir sesuai difficulty | Spike bergelombang per lajur: turun → **peringatan oranye** → naik (damage) |
+| **SENTRY** | bergilir, room ≥ 6×6 | Turret membidik & menembak bila ada line of sight, mata berkedip sebelum menembak |
+| **TREASURE** | room samping terjauh di luar jalur utama Start→Goal (§117) | Peti harta **+300**, dijaga Guard |
+| **BOSS** | room Goal (hard rule, §116) | Boss besar menjaga area Goal |
+
+- **Difficulty** = jarak BFS center room dari Start (0–1). Room dekat Start lebih mudah dan tantangan naik bertahap.
+- Assignment memakai `System.Random(seed)` terpisah, sehingga urutan random modul tidak berubah dan seed yang sama tetap menghasilkan dungeon yang identik (tabel eksperimen 1–6 tidak berubah).
+- Setiap room diberi warna lantai dan label sesuai perannya, dan banner muncul saat player masuk room.
+- **Enemy bergerak dengan FSM** (`EnemyController`): Idle (perilaku SimpleEnemy modul) · Patrol · Wander · Watch → Chase → Return · Boss. Warna mata menunjukkan state (kuning = berjaga, merah berkedip = mengejar). Gerakan dibatasi di dalam room asal, jadi Enemy tidak menembus Wall dan constraint spawn modul tetap berlaku. Setelah menyerang, Enemy mundur sejenak (*recoil*).
+- Toggle **Room challenges** di panel kiri mematikan lapisan ini untuk perbandingan dengan perilaku modul dasar (Enemy diam berputar).
 
 ## Scene
 | Scene | Isi |
 |---|---|
-| `Assets/Scenes/PCG_Dungeon_Demo.unity` | **Demo autoplay.** Animasi pipeline PCG → mulai otomatis → Player berjalan sendiri (autopilot BFS) → Level Cleared → dungeon berikutnya (seed + 1), terus berulang tanpa input. |
+| `Assets/Scenes/PCG_Dungeon_Demo.unity` | **Demo autoplay.** Animasi pipeline PCG (termasuk tahap ROOM ROLES) → mulai otomatis → Player berjalan sendiri (autopilot BFS) → Level Cleared → dungeon berikutnya (seed + 1), terus berulang tanpa input. Bila gagal 2× pada seed yang sama, demo pindah ke seed berikutnya. |
 | `Assets/Scenes/PCG_Dungeon_Scene.unity` | **Scene praktikum.** Layout dan fitur sama, tetapi dimainkan manual (ENTER untuk mulai, WASD). F2 menyalakan autopilot kapan saja. |
 
 Cara cepat: menu **Tools > GameCerdas P10 > 4. Open DEMO (Autoplay)**. Atur Game view ke 1920×1080 atau 16:9.
@@ -37,13 +59,13 @@ Layar di dalam viewport: Title, Level Cleared (rincian skor), Caught/Game Over (
 | P / ESC | Pause |
 | TAB | Mode fokus (viewport penuh) |
 
-Aturan main: Item +100, Goal +500 + bonus waktu. Menabrak Enemy −1 HP (3 HP). HP habis → retry dengan seed yang sama.
+Aturan main: Item +100, peti harta +300, Goal +500 + bonus waktu. Kena Enemy/spike/proyektil −1 HP (5 HP, pulih +2 setiap level selesai). HP habis → retry dengan seed yang sama.
 
 ## Menu Editor (`Tools > GameCerdas P10`)
 | Menu | Fungsi |
 |---|---|
 | 1. Build Assets + Scene | Membuat ulang materials neon, prefabs, post-processing, dan kedua scene |
-| 2. Run Experiments | Eksperimen 1–6 + Tugas §126 → `Hasil_Eksperimen_P10.md` |
+| 2. Run Experiments | Eksperimen 1–7 + Tugas §126 → `Hasil_Eksperimen_P10.md` |
 | 3. Open Scene And Play | Scene praktikum |
 | 4. Open DEMO (Autoplay) | Scene demo |
 
@@ -53,14 +75,16 @@ Assets/
 ├── Scenes/      PCG_Dungeon_Scene.unity, PCG_Dungeon_Demo.unity
 ├── Scripts/
 │   ├── PCG/       TileType, DungeonRoom, BSPNode, DungeonGenerator   ← inti modul
+│   │              RoomChallengeSystem (room role assignment)
 │   ├── Player/    SimplePlayerController
-│   ├── Enemy/     SimpleEnemy
+│   ├── Enemy/     SimpleEnemy (modul), EnemyController (FSM)
 │   ├── Gameplay/  DungeonGameManager (state, skor, HP, input)
 │   │              DungeonDemoDirector (animasi pipeline + autopilot BFS)
 │   │              DungeonHUD (dashboard), GoalTrigger, ItemPickup
+│   │              Hazards/ SpikeTrap, Turret, Projectile
 │   ├── Common/    UIFactory, Fx, AudioManager, PostFxController, ... (dari P09)
 │   └── Editor/    DungeonProjectBuilder, DungeonExperimentRunner
-├── Prefabs/  Dungeon (Floor, Wall, Goal, Start) · Characters (Player, Enemy) · Items (Item)
+├── Prefabs/  Dungeon (Floor, Wall, Goal, Start, Spike, Turret) · Characters (Player, Enemy) · Items (Item, Chest)
 ├── Materials/  neon: tekstur tepi (T_Edge) sebagai emission map
 └── Resources/Fx, Textures, TextMesh Pro, Settings/P10_PostFX.asset
 ```
@@ -74,6 +98,7 @@ ClearDungeon → SetupSeed
      → ValidateDungeon + HasPathToGoal (BFS) → tidak valid? seed++ dan ulangi
 → BuildDungeon (Floor/Corridor, Wall visible saja, Start, Goal)
 → SpawnGameplayObjects (Player; Enemy & Item dengan constraint)
+→ RoomChallengeSystem.Build (peran room, hazard, mode FSM Enemy, Boss, peti)
 → Metrics → event Generated (HUD, animasi, game manager)
 ```
 
@@ -88,7 +113,8 @@ Enemy hanya di Floor & ≥ 8 tile dari Start ✔ · Item di Floor ✔ · Seed sa
 - **Dungeon Metrics** + **checklist constraint** live
 - **Constraint tambahan**: safe room tanpa Enemy dan **Enemy tidak menutup corridor**. Tanpa constraint ini, seed 12345 menaruh Enemy di corridor 1 tile yang menjadi satu-satunya jalan keluar Start room, sehingga level tidak bisa diselesaikan.
 - **Visualisasi pipeline**: split BSP per kedalaman, room, corridor, wall sweep, jalur BFS, dan spawn
-- **Autopilot BFS**: item terdekat → Goal, menghindari Enemy (3×3), dengan deteksi macet
+- **Room Challenges** (Boss Room §116, Treasure Room §117, Patrol/Guard/Trap/Sentry) + **Enemy FSM**
+- **Autopilot BFS dinamis**: rencana ulang tiap 0,3 s; menghindari Enemy bergerak, radius deteksi Guard, spike aktif/akan aktif, garis tembak proyektil; menunggu celah aman bila perlu
 - Enemy density opsional, corridor width 1–3, Gizmos (room, leaf, start, goal)
 
 ## Catatan Implementasi

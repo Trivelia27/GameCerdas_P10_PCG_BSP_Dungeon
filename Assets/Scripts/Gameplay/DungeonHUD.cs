@@ -53,6 +53,11 @@ public class DungeonHUD : MonoBehaviour
     private RectTransform itemsFill;
     private TextMeshProUGUI goalText;
     private TextMeshProUGUI autoText;
+    private TextMeshProUGUI roomBanner;
+    private float roomBannerTimer;
+    private Color roomBannerColor;
+    private TextMeshProUGUI roleText;
+    private readonly List<Image> staticMarkers = new List<Image>();
     private TextMeshProUGUI timerText;
     private TextMeshProUGUI seedText;
     private Image[] hpPips;
@@ -130,6 +135,7 @@ public class DungeonHUD : MonoBehaviour
         cam = Camera.main;
 
         gm.Toast += ShowToast;
+        gm.RoomEntered += OnRoomEntered;
         gm.Popup += SpawnPopup;
         gm.Damaged += OnDamaged;
 
@@ -143,6 +149,7 @@ public class DungeonHUD : MonoBehaviour
         if (gm != null)
         {
             gm.Toast -= ShowToast;
+            gm.RoomEntered -= OnRoomEntered;
             gm.Popup -= SpawnPopup;
             gm.Damaged -= OnDamaged;
         }
@@ -368,6 +375,10 @@ public class DungeonHUD : MonoBehaviour
         UIFactory.Place(goalText.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -68f), new Vector2(560f, 26f));
         goalText.characterSpacing = 4f;
 
+        roomBanner = UIFactory.MakeText(hudRoot, "", 21f, Color.white, TextAlignmentOptions.Top, FontStyles.Bold);
+        UIFactory.Place(roomBanner.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -124f), new Vector2(900f, 30f));
+        roomBanner.characterSpacing = 2f;
+
         autoText = UIFactory.MakeText(hudRoot, "", 16f, UIFactory.Gold, TextAlignmentOptions.Top, FontStyles.Bold);
         UIFactory.Place(autoText.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -94f), new Vector2(620f, 24f));
 
@@ -418,7 +429,7 @@ public class DungeonHUD : MonoBehaviour
         {
             Image chip = UIFactory.MakeImage(chips, "Chip" + i, new Color(1f, 1f, 1f, 0.08f), UIFactory.Rounded, true);
             UIFactory.Size(chip.gameObject, -1f, 30f, 1f);
-            TextMeshProUGUI t = UIFactory.MakeText(chip.transform, (i + 1) + " " + DungeonDemoDirector.PhaseNames[i], 12.5f,
+            TextMeshProUGUI t = UIFactory.MakeText(chip.transform, (i + 1) + " " + DungeonDemoDirector.PhaseNames[i], 11.5f,
                 UIFactory.Dim, TextAlignmentOptions.Center, FontStyles.Bold);
             UIFactory.Stretch(t.rectTransform);
             phaseChips[i] = chip;
@@ -635,7 +646,12 @@ public class DungeonHUD : MonoBehaviour
             if (v && gm.State == DungeonState.Title) gm.StartGame();
         });
         ToggleRow(p, "Overlay Leaf/Room BSP  [B]", () => dir.ShowOverlay, v => dir.ShowOverlay = v);
-        ToggleRow(p, "Kamera follow player  [C]", () => dir.FollowCamera, v => dir.FollowCamera = v);
+        ToggleRow(p, "Room challenges (AI musuh + hazard)", () => gen.Challenges != null && gen.Challenges.ChallengesEnabled, v =>
+        {
+            if (gen.Challenges == null) return;
+            gen.Challenges.ChallengesEnabled = v;
+            ScheduleRegenerate();
+        });
         ToggleRow(p, "Constraint: Enemy jauh dari corridor", () => gen.KeepCorridorsClear, v =>
         {
             gen.KeepCorridorsClear = v;
@@ -726,14 +742,14 @@ public class DungeonHUD : MonoBehaviour
         Section(p, "MINIMAP · BSP LEAF & ROOM");
 
         RectTransform mapBox = UIFactory.Node(p, "MinimapBox");
-        UIFactory.Size(mapBox.gameObject, -1f, 236f);
+        UIFactory.Size(mapBox.gameObject, -1f, 196f);
 
         Image mapBg = UIFactory.MakeImage(mapBox, "Bg", new Color(0f, 0f, 0f, 0.35f), UIFactory.Rounded, true);
         UIFactory.Stretch(mapBg.rectTransform);
 
         minimap = UIFactory.MakeRawImage(mapBox, "Minimap");
         minimapRect = minimap.rectTransform;
-        UIFactory.Place(minimapRect, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(352f, 230f));
+        UIFactory.Place(minimapRect, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(352f, 190f));
 
         markerRoot = UIFactory.Node(minimapRect, "Markers");
         UIFactory.Stretch(markerRoot);
@@ -741,40 +757,44 @@ public class DungeonHUD : MonoBehaviour
         goalMarker = Marker(UIFactory.Gold, 11f);
         playerMarker = Marker(UIFactory.Cyan, 11f);
 
+        Section(p, "ROOM ROLES");
+        roleText = UIFactory.MakeText(p, "", 15f, Color.white, TextAlignmentOptions.TopLeft, FontStyles.Normal, true);
+        UIFactory.Size(roleText.gameObject, -1f, 40f);
+
         Section(p, "METRICS");
         MetricRow(p, "seed", "Seed / Attempt");
         MetricRow(p, "bsp", "BSP Leaves / Rooms");
-        MetricRow(p, "floor", "Floor Tiles");
-        MetricRow(p, "corridor", "Corridor Tiles");
+        MetricRow(p, "floor", "Floor / Corridor");
         MetricRow(p, "wall", "Wall Objects");
         MetricRow(p, "dist", "Start → Goal");
-        MetricRow(p, "spawn", "Enemy / Item");
+        MetricRow(p, "spawn", "Enemy / Item / Hazard");
         MetricRow(p, "time", "Generation Time");
 
         Section(p, "CONSTRAINTS");
         string[] labels =
         {
-            "Room ≥ 2",
-            "Start & Goal di Floor, Start ≠ Goal",
+            "Room ≥ 2, Start & Goal di Floor",
             "BFS: Goal dapat dicapai",
-            "Enemy ≥ 8 tile dari Start",
+            "Enemy modul ≥ 8 tile dari Start",
             "Safe room & corridor bebas Enemy",
-            "Soft: Goal jauh (≥ 40 langkah)",
-            "Soft: dungeon tidak linear (≥ 6 room)"
+            "Boss hanya di Goal room (§116)",
+            "Enemy & hazard tetap di room-nya",
+            "Soft: Treasure di room samping (§117)",
+            "Soft: Goal jauh (≥ 40 langkah)"
         };
 
         foreach (string label in labels)
         {
             RectTransform row = UIFactory.Node(p, "Constraint");
             UIFactory.Horizontal(row.gameObject, 10f).childAlignment = TextAnchor.MiddleLeft;
-            UIFactory.Size(row.gameObject, -1f, 21f);
+            UIFactory.Size(row.gameObject, -1f, 20f);
 
             Image pip = UIFactory.MakeImage(row, "Pip", UIFactory.Green, UIFactory.Circle);
             UIFactory.Size(pip.gameObject, 12f, 12f);
             row.GetComponent<HorizontalLayoutGroup>().childForceExpandHeight = false;
 
             TextMeshProUGUI text = UIFactory.MakeText(row, label, 15f, Color.white, TextAlignmentOptions.MidlineLeft);
-            UIFactory.Size(text.gameObject, -1f, 21f, 1f);
+            UIFactory.Size(text.gameObject, -1f, 20f, 1f);
 
             constraintRows.Add(new ConstraintRow { pip = pip, text = text });
         }
@@ -792,13 +812,13 @@ public class DungeonHUD : MonoBehaviour
     {
         RectTransform row = UIFactory.Node(parent, "Metric_" + key);
         UIFactory.Horizontal(row.gameObject, 8f);
-        UIFactory.Size(row.gameObject, -1f, 23f);
+        UIFactory.Size(row.gameObject, -1f, 22f);
 
         TextMeshProUGUI name = UIFactory.MakeText(row, label, 15.5f, UIFactory.Dim, TextAlignmentOptions.MidlineLeft);
-        UIFactory.Size(name.gameObject, -1f, 23f, 1f);
+        UIFactory.Size(name.gameObject, -1f, 22f, 1f);
 
         TextMeshProUGUI value = UIFactory.MakeText(row, "-", 16f, Color.white, TextAlignmentOptions.MidlineRight, FontStyles.Bold);
-        UIFactory.Size(value.gameObject, 190f, 23f);
+        UIFactory.Size(value.gameObject, 190f, 22f);
 
         metricValues[key] = value;
     }
@@ -844,7 +864,17 @@ public class DungeonHUD : MonoBehaviour
                     c = nearFloor ? wall : empty;
                 }
                 else if (t == TileType.Start) c = UIFactory.Green;
-                else c = gen.IsCorridorTile(x, y) ? corridor : room;
+                else if (gen.IsCorridorTile(x, y)) c = corridor;
+                else
+                {
+                    c = room;
+                    RoomChallengeSystem rc = gen.Challenges;
+                    if (rc != null && rc.Active)
+                    {
+                        int ri = rc.RoomIndexAt(new Vector2Int(x, y));
+                        if (ri >= 0) c = Color.Lerp(room, RoomChallengeSystem.RoleColor(rc.RoleOf(ri)), 0.42f);
+                    }
+                }
 
                 for (int i = 0; i < px; i++)
                     for (int j = 0; j < px; j++)
@@ -867,17 +897,21 @@ public class DungeonHUD : MonoBehaviour
         minimap.texture = minimapTexture;
 
         // fit aspect di dalam kotak 352×230
-        float scale = Mathf.Min(352f / w, 230f / h);
+        float scale = Mathf.Min(352f / w, 190f / h);
         minimapRect.sizeDelta = new Vector2(w * scale, h * scale);
 
-        // marker Enemy
-        foreach (Image m in enemyMarkers) Destroy(m.gameObject);
-        enemyMarkers.Clear();
-        foreach (Vector2Int e in gen.EnemyPositions)
+        // marker statis: turret
+        foreach (Image m in staticMarkers) Destroy(m.gameObject);
+        staticMarkers.Clear();
+        if (gen.Challenges != null && gen.Challenges.Active)
         {
-            Image m = Marker(UIFactory.Red, 8f);
-            PlaceMarker(m, new Vector2(e.x, e.y));
-            enemyMarkers.Add(m);
+            foreach (Vector2Int t in gen.Challenges.SolidTiles)
+            {
+                Image m = Marker(new Color(0.8f, 0.5f, 1f), 9f);
+                m.sprite = UIFactory.Rounded;
+                PlaceMarker(m, new Vector2(t.x, t.y));
+                staticMarkers.Add(m);
+            }
         }
 
         PlaceMarker(goalMarker, gen.GoalPosition);
@@ -916,6 +950,24 @@ public class DungeonHUD : MonoBehaviour
         float pulse = 0.75f + 0.25f * Mathf.Sin(Time.unscaledTime * 6f);
         goalMarker.rectTransform.sizeDelta = Vector2.one * (10f + 4f * pulse);
 
+        // marker Enemy (dinamis karena Enemy bergerak)
+        List<EnemyController> enemies = EnemyController.All;
+        while (enemyMarkers.Count < enemies.Count) enemyMarkers.Add(Marker(UIFactory.Red, 8f));
+        for (int i = 0; i < enemyMarkers.Count; i++)
+        {
+            bool active = i < enemies.Count;
+            enemyMarkers[i].gameObject.SetActive(active);
+            if (!active) continue;
+
+            EnemyController e = enemies[i];
+            Vector3 ep = e.transform.position / gen.TileSize;
+            PlaceMarker(enemyMarkers[i], new Vector2(ep.x, ep.z));
+            float size = e.IsBoss ? 14f : 8f;
+            enemyMarkers[i].rectTransform.sizeDelta = Vector2.one * (e.IsThreatening ? size * (0.9f + 0.3f * pulse) : size);
+            enemyMarkers[i].color = e.IsThreatening ? new Color(1f, 0.15f, 0.15f) : e.IsBoss ? new Color(0.8f, 0.05f, 0.15f) : UIFactory.Red;
+        }
+        playerMarker.transform.SetAsLastSibling();
+
         // marker Item (dinamis karena bisa diambil)
         ItemPickup[] items = FindObjectsByType<ItemPickup>(FindObjectsSortMode.None);
         while (itemMarkers.Count < items.Length) itemMarkers.Add(Marker(new Color(0.55f, 1f, 1f), 6f));
@@ -938,11 +990,13 @@ public class DungeonHUD : MonoBehaviour
 
         SetMetric("seed", m.seed + "  /  #" + m.attempts + (m.valid ? "  <color=#4DFF80>VALID</color>" : "  <color=#FF5266>INVALID</color>"));
         SetMetric("bsp", m.leafCount + "  /  " + m.roomCount);
-        SetMetric("floor", m.floorTiles + "  (" + m.floorPercentage.ToString("0.0") + "%)");
-        SetMetric("corridor", m.corridorTiles.ToString());
+        SetMetric("floor", m.floorTiles + " (" + m.floorPercentage.ToString("0") + "%)  /  " + m.corridorTiles);
         SetMetric("wall", m.wallObjects + "  <color=#8899AA>dari " + totalWalls + "</color>");
         SetMetric("dist", m.startGoalPath + " langkah  <color=#8899AA>(euclid " + m.startGoalEuclidean.ToString("0.0") + ")</color>");
-        SetMetric("spawn", m.enemyCount + "  /  " + m.itemCount);
+        RoomChallengeSystem rcs = gen.Challenges;
+        int hazardCount = rcs != null && rcs.Active ? rcs.SpikeCount + rcs.TurretCount : 0;
+        SetMetric("spawn", EnemyController.All.Count + "  /  " + m.itemCount + (rcs != null && rcs.HasTreasure ? "+1" : "") + "  /  " + hazardCount);
+        if (roleText != null) roleText.text = rcs != null ? rcs.RoleSummary() : "";
         SetMetric("time", m.generationMs.ToString("0.0") + " ms");
 
         // constraint check dari data generator
@@ -960,19 +1014,38 @@ public class DungeonHUD : MonoBehaviour
                            gen.GetTile(gen.GoalPosition.x, gen.GoalPosition.y) == TileType.Goal &&
                            gen.StartPosition != gen.GoalPosition;
 
-        SetConstraint(0, m.roomCount >= 2, true);
-        SetConstraint(1, startGoalOk, true);
-        SetConstraint(2, m.valid && m.startGoalPath > 0, true);
-        SetConstraint(3, minEnemy, true);
-        SetConstraint(4, safe || !gen.KeepCorridorsClear, gen.KeepCorridorsClear);
-        SetConstraint(5, m.startGoalPath >= 40, false);
-        SetConstraint(6, m.roomCount >= 6, false);
+        bool active = rcs != null && rcs.Active;
+        bool bossOk = true, contained = true;
+        if (active)
+        {
+            int bossRooms = 0;
+            foreach (RoomRole r in rcs.Roles) if (r == RoomRole.Boss) bossRooms++;
+            bossOk = bossRooms == 1 && rcs.BossRoom == rcs.RoomIndexAt(gen.GoalPosition);
+
+            foreach (EnemyController e in EnemyController.All)
+                if (rcs.RoomIndexAt(gen.WorldToGrid(e.transform.position)) < 0) contained = false;
+        }
+
+        SetConstraint(0, m.roomCount >= 2 && startGoalOk, true);
+        SetConstraint(1, m.valid && m.startGoalPath > 0, true);
+        SetConstraint(2, minEnemy, true);
+        SetConstraint(3, safe || !gen.KeepCorridorsClear, gen.KeepCorridorsClear);
+        SetConstraint(4, bossOk, true, !active);
+        SetConstraint(5, contained, true, !active);
+        SetConstraint(6, active && rcs.TreasureRoom >= 0 && !rcs.IsOnMainPath(rcs.TreasureRoom), false, !active);
+        SetConstraint(7, m.startGoalPath >= 40, false);
     }
 
-    private void SetConstraint(int index, bool ok, bool hard)
+    private void SetConstraint(int index, bool ok, bool hard, bool notApplicable = false)
     {
         if (index >= constraintRows.Count) return;
         ConstraintRow row = constraintRows[index];
+        if (notApplicable)
+        {
+            row.pip.color = new Color(1f, 1f, 1f, 0.2f);
+            row.text.color = new Color(0.55f, 0.6f, 0.68f);
+            return;
+        }
         row.pip.color = ok ? UIFactory.Green : (hard ? UIFactory.Red : UIFactory.Gold);
         row.text.color = ok ? Color.white : (hard ? UIFactory.Red : UIFactory.Gold);
     }
@@ -1075,7 +1148,21 @@ public class DungeonHUD : MonoBehaviour
         displayScore = Mathf.MoveTowards(displayScore, gm.Score, Mathf.Max(30f, Mathf.Abs(gm.Score - displayScore) * 8f) * Time.unscaledDeltaTime);
         scoreText.text = Mathf.RoundToInt(displayScore).ToString("000000");
 
-        itemsText.text = "ITEMS  " + gm.ItemsCollected + " / " + gm.ItemsTotal;
+        itemsText.text = "ITEMS  " + gm.ItemsCollected + " / " + gm.ItemsTotal +
+            (gen.Challenges != null && gen.Challenges.HasTreasure
+                ? "   <color=#FFD84D>CHEST " + (gm.TreasureCollected ? "1" : "0") + "/1</color>" : "");
+
+        if (roomBannerTimer > 0f)
+        {
+            roomBannerTimer -= Time.unscaledDeltaTime;
+            float ba = Mathf.Clamp01(roomBannerTimer / 0.6f);
+            roomBanner.color = new Color(roomBannerColor.r, roomBannerColor.g, roomBannerColor.b, ba);
+        }
+        else
+        {
+            roomBanner.text = "";
+        }
+        roomBanner.gameObject.SetActive(!title);
         float k = gm.ItemsTotal > 0 ? (float)gm.ItemsCollected / gm.ItemsTotal : 0f;
         itemsFill.anchorMax = new Vector2(Mathf.MoveTowards(itemsFill.anchorMax.x, k, Time.unscaledDeltaTime * 2f), 1f);
 
@@ -1173,7 +1260,8 @@ public class DungeonHUD : MonoBehaviour
                 "Seed <b>" + r.seed + "</b>   ·   Waktu <b>" + Mathf.FloorToInt(t / 60f).ToString("00") + ":" + (t % 60f).ToString("00.0") + "</b>\n" +
                 "Item <b>" + r.items + " / " + r.itemsTotal + "</b>  <color=#4DF2FF>+" + r.itemScore + "</color>   ·   " +
                 "Clear <color=#FFD14D>+" + r.clearBonus + "</color>   ·   Time <color=#FFD14D>+" + r.timeBonus + "</color>\n" +
-                "Jarak Start→Goal (BFS): <b>" + r.pathLength + "</b> langkah\n" +
+                "Jarak Start→Goal (BFS): <b>" + r.pathLength + "</b> langkah   ·   Hit diterima <b>" + gm.HitsTaken + "</b>" +
+                (gm.TreasureCollected ? "   ·   <color=#FFD14D>TREASURE +" + gm.TreasureScore + "</color>" : "") + "\n" +
                 "<size=26><b>SCORE " + gm.Score.ToString("000000") + "</b></size>";
             levelCountdown.text = auto ? "Dungeon berikutnya (seed " + (gen.Seed + 1) + ") dalam " + Mathf.CeilToInt(gm.AutoTimer) + "…" : "Seed berikutnya: " + (gen.Seed + 1);
         }
@@ -1192,6 +1280,17 @@ public class DungeonHUD : MonoBehaviour
         toastText.text = message;
         toastColor = color;
         toastTimer = 1.8f;
+    }
+
+    private void OnRoomEntered(int room)
+    {
+        RoomChallengeSystem rc = gen.Challenges;
+        if (rc == null || !rc.Active) return;
+
+        RoomRole role = rc.RoleOf(room);
+        roomBannerColor = RoomChallengeSystem.RoleColor(role);
+        roomBanner.text = RoomChallengeSystem.RoleName(role) + "  <size=16><color=#C8D4E0>— " + RoomChallengeSystem.RoleHint(role) + "</color></size>";
+        roomBannerTimer = 3.2f;
     }
 
     private void OnDamaged()

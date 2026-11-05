@@ -70,6 +70,9 @@ MonoBehaviour:
   bobAmplitude: 0.12
   bobSpeed: 3
   spinSpeed: 120
+  isTreasure: 0
+  value: 100
+  sparkleColor: {r: 0.4, g: 0.95, b: 1, a: 0.9}
 --- !u!1 &7724655719352742463
 GameObject:
   m_ObjectHideFlags: 0

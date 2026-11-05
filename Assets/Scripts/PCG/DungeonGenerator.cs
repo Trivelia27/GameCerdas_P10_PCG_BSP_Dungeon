@@ -96,6 +96,10 @@ public class DungeonGenerator : MonoBehaviour
     [SerializeField] private bool useEnemyDensity = false;
     [SerializeField] private int floorTilesPerEnemy = 50;
 
+    [Header("Room Challenges (lapisan PCG ke-2)")]
+    [Tooltip("Menentukan peran tiap room (Patrol/Guard/Trap/Sentry/Treasure/Boss) dan memasang hazard.")]
+    [SerializeField] private RoomChallengeSystem roomChallenges;
+
     [Header("Scene")]
     [Tooltip("Parent untuk GeneratedLevel (objek LevelRoot di Scene). Boleh kosong.")]
     [SerializeField] private Transform levelParent;
@@ -139,6 +143,7 @@ public class DungeonGenerator : MonoBehaviour
     // ---- Akses read-only untuk Demo / Autopilot ----
     public event System.Action Generated;
     public event System.Action GenerationFailed;
+    public RoomChallengeSystem Challenges => roomChallenges;
     public int GenerationCount { get; private set; }
 
     // ---- Parameter yang dapat diubah dari UI (Generation Controls) ----
@@ -247,6 +252,11 @@ public class DungeonGenerator : MonoBehaviour
 
         SpawnGameplayObjects();
 
+        if (roomChallenges != null)
+        {
+            roomChallenges.Build(this);
+        }
+
         stopwatch.Stop();
         ComputeMetrics((float)stopwatch.Elapsed.TotalMilliseconds);
 
@@ -317,6 +327,11 @@ public class DungeonGenerator : MonoBehaviour
         if (ok)
         {
             SpawnGameplayObjects();
+
+            if (roomChallenges != null)
+            {
+                roomChallenges.Assign(this);
+            }
         }
         stopwatch.Stop();
 

@@ -30,6 +30,10 @@ public static class DungeonExperimentRunner
         GameObject temp = new GameObject("__ExperimentGenerator");
         temp.hideFlags = HideFlags.HideAndDontSave;
         DungeonGenerator gen = temp.AddComponent<DungeonGenerator>();
+        RoomChallengeSystem rcs = temp.AddComponent<RoomChallengeSystem>();
+        SerializedObject wire = new SerializedObject(gen);
+        wire.FindProperty("roomChallenges").objectReferenceValue = rcs;
+        wire.ApplyModifiedPropertiesWithoutUndo();
 
         StringBuilder md = new StringBuilder();
         md.AppendLine("# Hasil Eksperimen — Praktikum 10: Procedural Dungeon Generation dengan BSP");
@@ -166,6 +170,51 @@ public static class DungeonExperimentRunner
         md.AppendLine();
 
         // ------------------------------------------------------------------
+        md.AppendLine("## Eksperimen 7 — Room Role Assignment (tantangan per room)");
+        md.AppendLine();
+        md.AppendLine("Lapisan PCG kedua: Start & Boss = hard rule (Boss = room Goal, §116), Treasure = room samping " +
+                      "terjauh di luar jalur utama Start→Goal (§117), sisanya Patrol/Guard/Trap/Sentry berurutan menurut " +
+                      "difficulty (jarak BFS dari Start). RNG terpisah (System.Random(seed)) sehingga tabel 1–6 tidak berubah.");
+        md.AppendLine();
+        md.AppendLine("Kode: S = Start, P = Patrol, G = Guard, T = Trap, Sn = Sentry, $ = Treasure, B = Boss (urutan list room BSP).");
+        md.AppendLine();
+        md.AppendLine("| Seed | Rooms | Room di jalur utama | Urutan peran | Treasure di room samping | Boss = room Goal |");
+        md.AppendLine("|---|---|---|---|---|---|");
+        foreach (int s in new[] { 101, 202, 303, 404, 505, 12345 })
+        {
+            Apply(gen, baseCfg);
+            DungeonMetrics m = gen.RunDataOnly(s, out _);
+            bool side = rcs.TreasureRoom >= 0 && !rcs.IsOnMainPath(rcs.TreasureRoom);
+            bool bossGoal = rcs.BossRoom >= 0 && rcs.RoleOf(rcs.BossRoom) == RoomRole.Boss;
+            md.AppendLine("| " + s + " | " + m.roomCount + " | " + rcs.MainPathCount + " | `" + rcs.RoleSequence() + "` | " +
+                          (rcs.TreasureRoom < 0 ? "— (tidak ada)" : side ? "Ya" : "Tidak (fallback)") + " | " + (bossGoal ? "Ya" : "Tidak") + " |");
+        }
+        md.AppendLine();
+
+        int[] roleTotals = new int[7];
+        int treasureSide = 0, treasureAny = 0, runs = 0, allFour = 0;
+        for (int s = 1; s <= 50; s++)
+        {
+            Apply(gen, baseCfg);
+            DungeonMetrics m = gen.RunDataOnly(s, out _);
+            if (!m.valid) continue;
+            runs++;
+            bool[] seen = new bool[7];
+            foreach (RoomRole r in rcs.Roles) { roleTotals[(int)r]++; seen[(int)r] = true; }
+            if (seen[(int)RoomRole.Patrol] && seen[(int)RoomRole.Guard] && seen[(int)RoomRole.Trap] && seen[(int)RoomRole.Sentry]) allFour++;
+            if (rcs.TreasureRoom >= 0) { treasureAny++; if (!rcs.IsOnMainPath(rcs.TreasureRoom)) treasureSide++; }
+        }
+
+        md.AppendLine("Distribusi peran pada " + runs + " dungeon valid (seed 1–50):");
+        md.AppendLine();
+        md.AppendLine("| Start | Patrol | Guard | Trap | Sentry | Treasure | Boss |");
+        md.AppendLine("|---|---|---|---|---|---|---|");
+        md.AppendLine("| " + string.Join(" | ", System.Array.ConvertAll(roleTotals, v => v.ToString())) + " |");
+        md.AppendLine();
+        md.AppendLine("- Dungeon dengan keempat tantangan (Patrol, Guard, Trap, Sentry) sekaligus: **" + allFour + "/" + runs + "**");
+        md.AppendLine("- Dungeon yang memiliki Treasure Room: **" + treasureAny + "/" + runs + "**, di antaranya di room samping: **" + treasureSide + "**");
+        md.AppendLine();
+
         md.AppendLine("## Contoh Peta ASCII — Seed 12345 (default)");
         md.AppendLine();
         md.AppendLine("`#` Wall, `.` Floor, `S` Start, `G` Goal, `E` Enemy, `I` Item");

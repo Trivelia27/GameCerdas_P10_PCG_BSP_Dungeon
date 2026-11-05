@@ -34,9 +34,18 @@ public class GoalTrigger : MonoBehaviour
         }
     }
 
-    private void OnTriggerEnter(Collider other)
+    // OnTriggerStay: Goal tidak terhitung selama player sedang terpental (knockback dari Enemy/Boss)
+    private void OnTriggerStay(Collider other)
     {
         if (triggered || !other.CompareTag("Player"))
+            return;
+
+        SimplePlayerController pc = other.GetComponent<SimplePlayerController>();
+        if (pc != null && pc.IsKnockedBack)
+            return;
+
+        DungeonGameManager gm = DungeonGameManager.Instance;
+        if (gm != null && gm.Director != null && !gm.Director.WantsGoal)
             return;
 
         DungeonGameManager manager = DungeonGameManager.Instance;

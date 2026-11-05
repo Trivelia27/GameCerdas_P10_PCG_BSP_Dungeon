@@ -66,9 +66,32 @@ Karena dungeon yang "terlihat benar" belum tentu dapat dimainkan (lihat kasus En
 **14. Bagaimana BFS dapat memvalidasi dungeon?**
 BFS dimulai dari Start dan menjelajahi semua tile non-Wall yang terhubung 4 arah. Jika Goal pernah dikunjungi, Start–Goal terhubung. Jika antrian habis sebelum Goal ditemukan, dungeon invalid. Variasi BFS (`ComputeDistances`) juga menghasilkan jarak langkah, yang dipakai untuk strategi Goal C dan metrics *Start–Goal Distance*. Pada Eksperimen 6 rata-rata jarak path: A (Last Room) 67.0, B (Farthest Euclidean) 73.2, C (Farthest Path) 84.0 langkah. Strategi C terbaik karena yang dirasakan player adalah jarak jalan, bukan garis lurus (seed 101: B = euclid 47.4 tetapi path 73, sedangkan C = euclid 39.1 tetapi path 86).
 
-**15. Apa keuntungan menggabungkan PCG dengan NavMesh dan AI?**
+**15. Apa keuntungan menggabungkan PCG dengan NavMesh dan AI?** *(lihat juga bagian C: Enemy FSM per peran room)*
 Level yang berbeda setiap kali tidak bisa diberi waypoint atau NavMesh secara manual. Dengan NavMeshSurface yang di-bake runtime setelah generation, Enemy (FSM, Behavior Tree, Utility AI dari pertemuan sebelumnya) langsung dapat bernavigasi di dungeon apa pun. Room–corridor BSP juga memberi struktur taktis yang jelas (ruang terbuka vs chokepoint) bagi AI. Parameter PCG (enemyCount, itemCount, ukuran) dapat diatur oleh Dynamic Difficulty Adjustment di pertemuan berikutnya.
 
-## C. Kesimpulan Eksperimen Lain
+## C. Pengembangan: Room Challenges & Enemy FSM
+
+**Room Role Assignment sebagai Constraint-Based Generation.** Layout BSP hanya menjawab *di mana* room berada. Lapisan kedua menentukan *apa isi* tiap room dengan aturan berikut:
+
+| Jenis | Aturan |
+|---|---|
+| Hard | Room pertama = **Start** (safe room). Room Goal = **Boss** (modul §116: Boss hanya boleh di Goal Room). |
+| Rule | **Treasure** = room samping terjauh yang **tidak** dilalui jalur BFS Start→Goal (modul §117: treasure di room tanpa Start/Goal, idealnya dead-end), sehingga eksplorasi diberi hadiah. |
+| Rule | Room lain diurutkan menurut *difficulty* (jarak BFS dari Start). Room termudah selalu **Patrol**, lalu **Guard / Trap / Sentry** bergilir dengan urutan diacak per seed, sehingga kesulitan naik bertahap dan setiap tipe muncul bila jumlah room cukup. |
+| Constraint ukuran | **Sentry** butuh room ≥ 6×6; bila tidak terpenuhi diganti Guard. |
+
+Hasil Eksperimen 7 (seed 1–50): seluruh 50 dungeon punya Boss tepat di room Goal dan punya Treasure Room. 48/50 Treasure berada di room samping, dan 2 sisanya fallback ketika semua room berada di jalur utama. 30/50 dungeon memuat keempat tantangan sekaligus; yang lain terlalu kecil (sedikit room). Assignment memakai RNG terpisah, sehingga tabel 1–6 identik dengan sebelum fitur ditambahkan: reproducibility modul tetap terjaga.
+
+**Enemy FSM.** Enemy tidak lagi sekadar berputar. Perilakunya mengikuti peran room:
+- **Patrol:** berkeliling sudut room.
+- **Wander:** berjalan acak (di Trap/Sentry room).
+- **Guard:** Watch → Chase saat player masuk radius deteksi 4,5 → Return ke pos bila player menjauh/keluar room.
+- **Boss:** menjaga area sekitar Goal (radius 4,5).
+
+Ini menghubungkan PCG dengan materi FSM sebelumnya. Semua gerakan dibatasi rectangle room asal, sehingga constraint spawn modul (tidak di Wall, tidak dekat Start, tidak di corridor) tetap berlaku sepanjang permainan. Checklist *"Enemy & hazard tetap di room-nya"* di HUD memverifikasinya secara live.
+
+**Pelajaran dari pengujian.** Saat diuji dengan autopilot, ditemukan bahwa Boss yang mengejar ke seluruh room membuat dungeon seed 12345 hampir tidak bisa diselesaikan, karena Boss room berada di tengah rantai room dan Treasure/Trap hanya bisa dicapai lewat room itu. Solusinya, Boss diikat ke area Goal: tepi room tetap bisa dilintasi. Ini contoh bahwa validasi *playability* tidak cukup hanya pada grid (BFS), tetapi juga harus memperhitungkan perilaku objek dinamis.
+
+## D. Kesimpulan Eksperimen Lain
 - **Ukuran dungeon (Eks. 4):** 40×30 → 80×60 menaikkan total GameObject ±638 → ±2312. Optimasi `IsWallVisible` memangkas Wall dari 3340 menjadi 837 cell pada 80×60 (−75%). Waktu algoritma data < 0.1 ms; biaya utama ada pada Instantiate/render, bukan algoritma.
 - **Enemy density (Eks. 5):** Enemy count absolut 20 pada 702 floor tile = 1 enemy per 35 tile (padat), 5 = 1 per 140 tile (sepi). Density berbasis luas floor (`useEnemyDensity`) lebih konsisten antar ukuran map.

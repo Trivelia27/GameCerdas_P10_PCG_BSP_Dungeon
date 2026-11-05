@@ -14,6 +14,7 @@ public class SimplePlayerController : MonoBehaviour
     public bool InputLocked { get; set; }
 
     public float MoveSpeed => moveSpeed;
+    public bool IsKnockedBack => knockback.sqrMagnitude > 1f;
 
     private CharacterController controller;
     private Vector3 velocity;
@@ -89,7 +90,7 @@ public class SimplePlayerController : MonoBehaviour
 
     private void OnControllerColliderHit(ControllerColliderHit hit)
     {
-        SimpleEnemy enemy = hit.collider.GetComponentInParent<SimpleEnemy>();
+        EnemyController enemy = hit.collider.GetComponentInParent<EnemyController>();
 
         if (enemy != null && DungeonGameManager.Instance != null)
         {
